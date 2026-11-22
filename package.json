@@ -1,0 +1,12 @@
+{
+  "name": "readligero",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Offline-first PWA e-book reader with vocabulary learning (SRS)",
+  "scripts": {
+    "start": "node tools/gen-precache.js && python3 -m http.server 8080",
+    "precache": "node tools/gen-precache.js",
+    "icons": "python3 tools/make-icons.py",
+    "test": "node tests/quiz.test.js && node tests/dict.test.js && node tests/extlinks.test.js"
+  }
+}
