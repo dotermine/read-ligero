@@ -355,10 +355,10 @@ body:not([data-active-tab="library"]) #addBookBtn { display: none; }
   display: flex;
   flex-direction: column;
   z-index: 50;
-  padding-bottom: calc(64px + env(safe-area-inset-bottom));
 }
 
 .rtb {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 30;      /* overlays the book; slides away while reading */
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 10px 12px;
   padding-top: calc(10px + env(safe-area-inset-top));
@@ -383,14 +383,10 @@ body:not([data-active-tab="library"]) #addBookBtn { display: none; }
 .tbtn:hover { background: rgba(127,127,127,.12); }
 .tbtn.active { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
 
-.rbody { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-/* #bookStage: the only box that book zoom / horizontal position act on. Its left/right margins ARE the horizontal
-   positioning; toolbars, tab bar and dialogs are siblings and always stay at 100% scale. */
-.book-stage {
-  position: absolute; inset: 0;
-  margin-left:  max(0%, calc(var(--book-offset, 0) * 1%));
-  margin-right: max(0%, calc(var(--book-offset, 0) * -1%));
-}
+.rbody { position: absolute; inset: 0; overflow: hidden; }
+/* #bookStage: the only box that book zoom acts on; toolbars, tab bar and dialogs are siblings and stay at 100% scale. */
+.book-stage { position: absolute; inset: 0; }
+@media (hover: hover) and (pointer: fine) { .pdf-wrap, .text-wrap, .epub-wrap { cursor: grab; } }   /* hold the left button and drag to pan */
 .pdf-wrap, .epub-wrap, .text-wrap { position: absolute; inset: 0; }
 
 /* Selection roots: no native callouts; our own highlight is painted via the Custom Highlight API */
@@ -616,6 +612,10 @@ html.book-locked .text-wrap { overflow-x: hidden; }
 .quiz-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 0 12px; }
 .quiz-progress-text { font-size: 13px; color: var(--muted); }
 .quiz-body { min-height: 240px; }
+/* the study session fills the screen; long sentences scroll INSIDE the card instead of being cut off */
+#quizSession:not([hidden]) { display: flex; flex-direction: column; height: calc(100vh - 64px - env(safe-area-inset-bottom) - 28px); height: calc(100dvh - 64px - env(safe-area-inset-bottom) - 28px); min-height: 340px; }
+#quizSession .quiz-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#quizSession .quiz-footer { flex: 0 0 auto; }
 .quiz-footer { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* ============================================================
@@ -634,15 +634,18 @@ html.book-locked .text-wrap { overflow-x: hidden; }
   transition: transform .15s ease;
 }
 .flashcard:active { transform: scale(.98); }
+.flashcard { flex: 1 1 auto; min-height: 0; justify-content: flex-start; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.flashcard > .fc-face { margin-top: auto; }                  /* auto margins centre short cards but never clip tall ones */
+.flashcard > :last-child { margin-bottom: auto; }
 .fc-face { width: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.fc-field { word-break: break-word; max-width: 100%; }
+.fc-field { overflow-wrap: anywhere; max-width: 100%; }
 .fc-word { font-size: 32px; font-weight: 700; color: var(--fc-word); }           /* large, black */
 .fc-tr { font-size: 20px; font-weight: 500; color: var(--muted); }              /* medium, gray */
 .fc-sent { font-size: 18px; color: var(--fc-blue); line-height: 1.4; }          /* medium, blue */
 .fc-sent-tr { font-size: 15px; color: var(--muted); line-height: 1.4; }         /* small/medium, gray */
 .flashcard .fc-hint { font-size: 13px; color: var(--muted); margin-top: 18px; }
 
-.fc-actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
+.fc-actions { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
 .fc-actions .btn { padding: 12px 6px; font-size: 13px; justify-content: center; }
 .fc-actions .btn.again { border-color: var(--bad); color: var(--bad); }
 .fc-actions .btn.hard  { border-color: var(--warn); color: var(--warn); }
@@ -664,6 +667,7 @@ html.book-locked .text-wrap { overflow-x: hidden; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
 .modal-box {
+  overscroll-behavior: contain;
   background: var(--bg);
   border-radius: 16px;
   padding: 20px;
@@ -909,17 +913,12 @@ html[dir="rtl"] .tile { text-align: right; }
 /* ============================================================
    READER: quick-settings bar (ReadEra-style), collapsible, above the tab bar
    ============================================================ */
-.qbar { position: relative; flex: 0 0 auto; z-index: 5; }
-.qbar-handle {
-  position: absolute; left: 50%; bottom: 100%; transform: translateX(-50%);
-  width: 56px; height: 22px; display: flex; align-items: center; justify-content: center;
-  border: 1px solid var(--border); border-bottom: none; border-radius: 12px 12px 0 0;
-  background: var(--surface); color: var(--muted); cursor: pointer; padding: 0;
-}
-.qbar-handle svg { width: 20px; height: 20px; transition: transform .2s ease; }
-.qbar[data-open="true"] .qbar-handle svg { transform: rotate(180deg); }
+.qbar { position: absolute; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 25; }
 .qbar-panel { background: var(--surface); border-top: 1px solid var(--border); padding: 8px 12px 10px; }
 .qbar-panel[hidden] { display: none; }
+.qlang { gap: 10px; margin-bottom: 6px; }
+.qlabel { flex: 0 0 auto; font-size: 13px; color: var(--muted); }
+.qselect { flex: 1; min-width: 0; height: 40px; padding: 0 8px; appearance: auto; }
 .qrow { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .qrow + .qrow { margin-top: 6px; }
 .qgroup { display: flex; gap: 2px; }
@@ -941,14 +940,9 @@ html[dir="rtl"] .tile { text-align: right; }
 .qval { min-width: 46px; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted); }
 input[type=range]:disabled { opacity: .45; }
 
-/* Fullscreen fallback (iOS iPhone: no Fullscreen API): hide our own chrome while reading */
-html.pseudo-fs body[data-active-tab="read"] .bnav,
-html.pseudo-fs body[data-active-tab="read"] .rtb { display: none; }
-html.pseudo-fs .reader-root { padding-bottom: env(safe-area-inset-bottom); }
 
 /* Orientation fallback (no Screen Orientation API, e.g. iOS Safari): rotate the reader itself */
 html[data-css-rotate] body[data-active-tab="read"] .bnav { display: none; }
-html[data-css-rotate] .reader-root { padding-bottom: 0; }
 html[data-css-rotate="90"]  .reader-root { width: 100vh; height: 100vw; inset: auto; top: 0; left: 0; transform-origin: 0 0; transform: translateX(100vw) rotate(90deg); }
 html[data-css-rotate="270"] .reader-root { width: 100vh; height: 100vw; inset: auto; top: 0; left: 0; transform-origin: 0 0; transform: translateY(100vh) rotate(-90deg); }
 html[data-css-rotate="180"] .reader-root { transform: rotate(180deg); }
@@ -960,7 +954,7 @@ html[data-css-rotate="180"] .reader-root { transform: rotate(180deg); }
 .sheet[hidden] { display: none; }
 .sheet-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.35); animation: fadeIn .15s ease-out; }
 .sheet-panel {
-  position: relative; width: 100%; max-width: 640px; max-height: 70vh; display: flex; flex-direction: column;
+  position: relative; width: 100%; max-width: 640px; max-height: 70vh; max-height: 70dvh; display: flex; flex-direction: column;
   background: var(--bg); color: var(--text); border: 1px solid var(--border); border-bottom: none;
   border-radius: 18px 18px 0 0; box-shadow: var(--shadow-lg);
   padding: 6px 16px calc(14px + env(safe-area-inset-bottom));
@@ -972,7 +966,7 @@ html[data-css-rotate="180"] .reader-root { transform: rotate(180deg); }
 .ds-title { min-width: 0; }
 .ds-word { font-size: 24px; font-weight: 700; overflow-wrap: anywhere; }
 .ds-ipa { font-size: 15px; color: var(--muted); margin-top: 2px; }
-.ds-body { flex: 1; min-height: 40px; overflow-y: auto; -webkit-overflow-scrolling: touch; margin: 8px 0 12px; font-size: 16px; line-height: 1.5; }
+.ds-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; margin: 8px 0 12px; font-size: 16px; line-height: 1.5; }
 .ds-entry + .ds-entry { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
 .ds-head { font-weight: 700; margin-bottom: 4px; }
 .ds-def { overflow-wrap: anywhere; }
@@ -986,3 +980,14 @@ body { touch-action: pan-x pan-y; }   /* no browser pinch-zoom of the app UI */
 
 /* Settings → "Translation above saved words" OFF (EPUB frames get the same rule through Reader.updateStyles) */
 html.no-gloss .rt-vocab[data-tr]::before { display: none; }
+
+
+/* ============================================================
+   READER AUTO-HIDE (ReadEra style): while a book is open the top bar and the tab bar slide away.
+   Tap the very top or very bottom edge of the screen to bring them back.
+   ============================================================ */
+.rtb, .bnav { transition: transform .22s cubic-bezier(.4,0,.2,1); }
+body.reader-immersive .rtb { transform: translateY(-110%); }
+body.reader-immersive .bnav { transform: translateY(110%); }
+body.reader-immersive .qbar { display: none; }
+.sel-popup, .sheet { -webkit-user-select: none; user-select: none; }

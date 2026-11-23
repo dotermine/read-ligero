@@ -4,21 +4,22 @@
  *
  *   screenMode   'windowed' | 'fullscreen'      Fullscreen API (+ webkit prefix), pseudo-fullscreen fallback (iOS iPhone)
  *   orientation  'auto' | 0 | 90 | 180 | 270    Screen Orientation API lock, CSS rotation fallback (iOS Safari)
- *   bookZoom     0.5 … 3                        scales ONLY the book content (never the app chrome)
- *   bookOffset   -40 … 40                       horizontal shift of the book column, in % of the width
- *   bookLocked   boolean                        freezes zoom + horizontal position (also blocks pinch gestures)
+ *   bookZoom     0.5 … 4                        scales ONLY the book content (never the app chrome); continuous (0.01 steps)
+ *   bookLocked   boolean                        freezes zoom + panning (also blocks pinch gestures)
+ *
+ * Horizontal position is not a setting: zoomed pages are panned by dragging (touch, or the left mouse button held down).
  *
  * Any control carrying one of these data attributes is wired automatically and kept in sync, wherever it lives:
- *   [data-disp="bookZoom|bookOffset"]   range input          [data-disp-val="bookZoom|bookOffset"]  value label
+ *   [data-disp="bookZoom"]   range input          [data-disp-val="bookZoom"]  value label
  *   [data-disp-screen="toggle|fullscreen|windowed"]          [data-disp-orient="auto|0|90|180|270"]
- *   [data-disp-lock]                                          [data-disp-reset="bookZoom|bookOffset"]
+ *   [data-disp-lock]                                          [data-disp-reset="bookZoom"]
  */
 var Display = (function () {
   'use strict';
 
-  var KEYS = ['screenMode', 'orientation', 'bookZoom', 'bookOffset', 'bookLocked'];
-  var DEFAULTS = { screenMode: 'windowed', orientation: 'auto', bookZoom: 1, bookOffset: 0, bookLocked: false };
-  var LIMITS = { bookZoom: [0.5, 3, 0.05], bookOffset: [-40, 40, 1] };
+  var KEYS = ['screenMode', 'orientation', 'bookZoom', 'bookLocked'];
+  var DEFAULTS = { screenMode: 'windowed', orientation: 'auto', bookZoom: 1, bookLocked: false };
+  var LIMITS = { bookZoom: [0.5, 4, 0.01] };
   // Screen.orientation.angle values → lock() types. 0° = portrait clockwise … 270° = landscape counter-clockwise.
   var LOCK_TYPE = { 0: 'portrait-primary', 90: 'landscape-primary', 180: 'portrait-secondary', 270: 'landscape-secondary' };
 
@@ -31,7 +32,7 @@ var Display = (function () {
   var round = function (v, step) { return Math.round(v / step) * step; };
 
   function sanitize(k, v) {
-    if (k === 'bookZoom' || k === 'bookOffset') {
+    if (k === 'bookZoom') {
       var L = LIMITS[k], n = Number(v);
       if (!isFinite(n)) return DEFAULTS[k];
       return Number(clamp(round(n, L[2]), L[0], L[1]).toFixed(2));
@@ -117,7 +118,6 @@ var Display = (function () {
   // ===================== State =====================
   function applyCss() {
     root.style.setProperty('--book-zoom', S.bookZoom);
-    root.style.setProperty('--book-offset', S.bookOffset);
     root.classList.toggle('book-locked', S.bookLocked);
   }
 
@@ -130,10 +130,12 @@ var Display = (function () {
     var changed = {}, any = false;
     KEYS.forEach(function (k) {
       if (!(k in patch)) return;
-      if (S.bookLocked && !opts.force && (k === 'bookZoom' || k === 'bookOffset')) return;   // locked: layout is frozen
+      if (S.bookLocked && !opts.force && k === 'bookZoom') return;   // locked: zoom is frozen
       var v = sanitize(k, patch[k]);
       if (v !== S[k]) { S[k] = v; changed[k] = true; any = true; }
     });
+    // end of a gesture / slider drag: tell the reader to commit (re-render at the final zoom) even if the value did not change
+    if (opts.persist && 'bookZoom' in patch && !S.bookLocked) { changed.bookZoom = true; any = true; }
     if (!any && !opts.persist) return Promise.resolve();
     applyCss();
     var jobs = [];
@@ -158,7 +160,7 @@ var Display = (function () {
   function leaveReader() { active = false; unlockOrientation(); return exitFullscreen(); }
 
   // ===================== Controls (reader bar + Settings tab) =====================
-  function pct(k, v) { return k === 'bookZoom' ? Math.round(v * 100) + '%' : (v > 0 ? '+' : '') + v + '%'; }
+  function pct(k, v) { return Math.round(v * 100) + '%'; }
 
   function render() {
     document.querySelectorAll('[data-disp]').forEach(function (el) {

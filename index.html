@@ -120,10 +120,11 @@
     <div class="rprogress"><span id="rprog"></span></div>
 
     <div id="qbar" class="qbar" data-open="false">
-      <button type="button" id="qbarHandle" class="qbar-handle" aria-label="Display settings" aria-expanded="false" aria-controls="qbarPanel">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg>
-      </button>
       <div id="qbarPanel" class="qbar-panel" role="region" aria-label="Book display settings" hidden>
+        <div class="qrow qlang">
+          <label class="qlabel" for="bookLang" data-i18n="bookLanguage">Book language</label>
+          <select id="bookLang" class="inp qselect" aria-label="Language of this book (source language)"></select>
+        </div>
         <div class="qrow">
           <button type="button" class="qbtn qscreen" data-disp-screen="toggle" aria-pressed="false" aria-label="Fullscreen / windowed mode" title="Fullscreen / windowed">
             <svg class="ic-full" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
@@ -144,13 +145,8 @@
         </div>
         <div class="qrow qslider">
           <svg class="qicon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
-          <input type="range" data-disp="bookZoom" min="0.5" max="3" step="0.05" aria-label="Book zoom">
+          <input type="range" data-disp="bookZoom" min="0.5" max="4" step="0.01" aria-label="Book zoom">
           <span class="qval" data-disp-val="bookZoom">100%</span>
-        </div>
-        <div class="qrow qslider">
-          <svg class="qicon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8l4 4-4 4M2 12h20M6 8l-4 4 4 4"/></svg>
-          <input type="range" data-disp="bookOffset" min="-40" max="40" step="1" aria-label="Horizontal position of the book text">
-          <span class="qval" data-disp-val="bookOffset">0%</span>
         </div>
       </div>
     </div>
@@ -272,6 +268,9 @@
     <div class="set-block">
       <div class="set-label" data-i18n="language">Interface language</div>
       <select id="setLang" class="inp"></select>
+      <div class="set-label" data-i18n="nativeLanguage" style="margin-top:14px">Native language</div>
+      <select id="setNative" class="inp"></select>
+      <div class="hint" data-i18n="nativeHint">Translations (external translators and dictionaries) go into this language. Set the language of each book in the reader: display settings → Book language.</div>
     </div>
   </div>
 
@@ -358,9 +357,7 @@
           <button type="button" class="chip chip-ico" data-disp-orient="0" aria-pressed="false" aria-label="Portrait, clockwise (0°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="10" y1="5" x2="14" y2="5"/></svg></button><button type="button" class="chip chip-ico" data-disp-orient="180" aria-pressed="false" aria-label="Portrait, counter-clockwise (180°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="10" y1="19" x2="14" y2="19"/></svg></button><button type="button" class="chip chip-ico" data-disp-orient="90" aria-pressed="false" aria-label="Landscape, clockwise (90°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="5" y1="10" x2="5" y2="14"/></svg></button><button type="button" class="chip chip-ico" data-disp-orient="270" aria-pressed="false" aria-label="Landscape, counter-clockwise (270°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="19" y1="10" x2="19" y2="14"/></svg></button>
         </div></div>
       <div class="set-row"><span data-i18n="bookZoom">Book zoom</span>
-        <div class="set-slider"><input type="range" data-disp="bookZoom" min="0.5" max="3" step="0.05" aria-label="Book zoom"><span class="qval" data-disp-val="bookZoom">100%</span><button type="button" class="chip" data-disp-reset="bookZoom" aria-label="Reset zoom">↺</button></div></div>
-      <div class="set-row"><span data-i18n="hPosition">Horizontal position</span>
-        <div class="set-slider"><input type="range" data-disp="bookOffset" min="-40" max="40" step="1" aria-label="Horizontal position"><span class="qval" data-disp-val="bookOffset">0%</span><button type="button" class="chip" data-disp-reset="bookOffset" aria-label="Reset horizontal position">↺</button></div></div>
+        <div class="set-slider"><input type="range" data-disp="bookZoom" min="0.5" max="4" step="0.01" aria-label="Book zoom"><span class="qval" data-disp-val="bookZoom">100%</span><button type="button" class="chip" data-disp-reset="bookZoom" aria-label="Reset zoom">↺</button></div></div>
       <div class="set-row"><span data-i18n="lockView">Lock view</span>
         <button type="button" role="switch" class="switch" data-disp-lock aria-checked="false" aria-pressed="false" aria-label="Lock view"><span class="switch-knob"></span></button></div>
     </div>
@@ -369,9 +366,11 @@
   <div class="card" style="margin-top:12px">
     <div class="set-block">
       <div class="set-label" data-i18n="backupTitle">Backup &amp; storage</div>
+      <div class="set-row"><span data-i18n="offlineStatus">Offline mode</span><span id="offlineStatus" class="muted">checking…</span></div>
       <div class="set-row"><span data-i18n="storageInfo">Storage</span><span id="persistStatus" class="muted">checking…</span></div>
       <div class="set-row"><span data-i18n="storageUsed">Used</span><span id="storageUsage" class="muted">—</span></div>
       <div class="chips" style="margin-top:10px">
+        <button type="button" class="btn" id="offlineBtn" data-i18n="offlineCheck">Check offline files</button>
         <button type="button" class="btn" id="persistBtn" data-i18n="persistRequest">Protect my data</button>
         <button type="button" class="btn" id="exportBtn" data-i18n="exportBackup">Export backup</button>
         <button type="button" class="btn" id="importBtn" data-i18n="importBackup">Import backup</button>

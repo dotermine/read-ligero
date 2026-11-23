@@ -76,7 +76,7 @@
       align: 'left', lineHeight: 1.6, readingMode: 'scroll', lang: 'en',
       longPressMs: 500,
       glossOn: true, glossSize: 55, glossColor: 'amber', lookColor: 'blue', vocabColor: 'amber',
-      newPerSession: 10, studyLang: ''
+      newPerSession: 10, studyLang: '', nativeLang: ''
     },
     openBookId: null,
     lastBookId: null,
@@ -84,6 +84,7 @@
     saveTimer: null,
     wakeLock: null,
     currentLangCode: 'en',
+    chrome: false, chromeTimer: null,
     selection: null,
     marks: { vocab: new Map(), looked: new Set() },
     dictBookId: null,
@@ -124,6 +125,8 @@
     bindWordModal();
     bindLangModal();
     bindDictSheet();
+    bindBookLang();
+    bindOffline();
     bindDictionaryView();
     bindSettingsEvents();
     bindDisplaySettings();
@@ -140,7 +143,7 @@
       ['longPressMs', 500], ['cardFront', DEFAULT_FRONT], ['cardBack', DEFAULT_BACK],
       ['wordSortKey', 'createdAt'], ['wordSortDir', -1],
       ['glossOn', true], ['glossSize', 55], ['glossColor', 'amber'], ['lookColor', 'blue'], ['vocabColor', 'amber'],
-      ['newPerSession', 10], ['studyLang', '']
+      ['newPerSession', 10], ['studyLang', ''], ['nativeLang', '']
     ];
 
     Promise.all(KEYS.map(function (k) { return getSetting(k[0], k[1]); })).then(function (arr) {
@@ -161,6 +164,8 @@
       state.settings.vocabColor = paletteHas(HILITE_COLORS, s.vocabColor) ? s.vocabColor : 'amber';
       state.settings.newPerSession = clampNum(s.newPerSession, 0, 200, 10);
       state.settings.studyLang = String(s.studyLang || '');
+      state.settings.nativeLang = String(s.nativeLang || '') || state.settings.lang;     // default: the interface language
+      if (!s.nativeLang) setSetting('nativeLang', state.settings.nativeLang);
       state.viewMode = s.viewMode === 'list' ? 'list' : 'large'; // the old "small" grid no longer exists
       state.sortKey = s.sortKey === 'title' ? 'title' : 'addedAt';
       state.sortDir = Number(s.sortDir) === 1 ? 1 : -1;
@@ -176,6 +181,7 @@
       applyMarkStyles();
       applyViewMode(state.viewMode);
       renderLangSelect();
+      renderNativeSelect();
       renderSettingsControls();
       applyReadingMode();
       updateSortUI();
@@ -190,6 +196,7 @@
 
     enforcePersistentStorage().then(refreshStorageInfo).catch(function () {});
     registerServiceWorker();
+    setTimeout(function () { refreshOfflineStatus(true); }, 3000);    // finish caching optional files in the background
 
     var addBtn = document.getElementById('addBookBtn');
     if (addBtn) addBtn.disabled = false;
@@ -244,8 +251,10 @@
   /** Writes the latest reading position to IndexedDB immediately (cancels the debounce timer). */
   function flushProgress() {
     if (state.saveTimer) { clearTimeout(state.saveTimer); state.saveTimer = null; }
-    if (state.pendingProgress && state.openBookId) {
-      saveProgress(state.openBookId, state.pendingProgress).catch(function () {});
+    if (state.openBookId) {
+      var snap = Reader.snapshot();                         // exact scroll anchor / CFI right now (null while the book is still loading)
+      if (snap) state.pendingProgress = Object.assign({}, state.pendingProgress || {}, snap);
+      if (state.pendingProgress) saveProgress(state.openBookId, state.pendingProgress).catch(function () {});
     }
   }
 
@@ -297,11 +306,12 @@
     });
     document.body.setAttribute('data-active-tab', name);
     if (name === 'read' && state.openBookId) Display.enterReader(); else Display.leaveReader();
+    updateImmersive();
     if (name !== 'read') { Reader.clearSelection(); closeDictSheet(); }
     if (name !== 'quiz') { var bm = $('bookMenu'); if (bm) bm.hidden = true; }
     if (name === 'library') refreshLibrary();
     if (name === 'quiz') refreshWords();
-    if (name === 'settings') { refreshLanguages(); refreshStorageInfo(); }
+    if (name === 'settings') { refreshLanguages(); refreshStorageInfo(); refreshOfflineStatus(false); }
   }
 
   // ===================== LIBRARY =====================
@@ -472,9 +482,7 @@
     var back = $('backBtn'), bm = $('bmBtn'), pop = $('selPopup');
 
     if (back) back.addEventListener('click', closeReader);
-    ['qbarBtn', 'qbarHandle'].forEach(function (id) {
-      var b = $(id); if (b) b.addEventListener('click', function () { setQbar($('qbarPanel').hidden); });
-    });
+    var qb = $('qbarBtn'); if (qb) qb.addEventListener('click', function () { setQbar($('qbarPanel').hidden); });
     if ($('errBackBtn')) $('errBackBtn').addEventListener('click', closeReader);
     if ($('retryBtn')) $('retryBtn').addEventListener('click', function () { if (state.openBookId) openReader(state.openBookId); });
     if (bm) bm.addEventListener('click', function () {
@@ -501,9 +509,13 @@
     // Reader -> UI: one popup, repositioned on every new selection, hidden on every clear
     Reader.onSelection(function (info) { state.selection = info; place(info.rect); });
     Reader.onClear(function () { pop.hidden = true; });
-    Reader.onBlankTap(function () {
+    // ReadEra style: bars are hidden while reading; tapping the very top / bottom edge brings them back,
+    // tapping the middle of the page hides them again.
+    Reader.onBlankTap(function (pt) {
       if (!$('qbarPanel').hidden) { setQbar(false); return; }   // first tap just collapses the display bar
-      $('rtb').classList.toggle('hidden');
+      var zone = Reader.EDGE;
+      if (pt && (pt.y <= zone || pt.y >= window.innerHeight - zone)) setChrome(true);
+      else if (state.chrome) setChrome(false);
     });
 
     if (pop) {
@@ -556,12 +568,16 @@
 
   /** Opens an external dictionary / translator (native app or web, see extlinks.js) for the selection. */
   function openExternal(kind, sel) {
-    var lang = state.currentLangCode || 'en';
+    var lang = state.currentLangCode || 'en', to = nativeCode();
+    if (kind === 'translator' && lang === to) {           // e.g. English → English: tell the user how to fix it instead of opening a useless page
+      UI.toast(tf('sameLang', languageName(lang)), 'warn', 7000);
+      return;
+    }
     trackLookup(sel);
     getLanguage(lang).then(function (l) {
       var cfg = l && (kind === 'dict' ? (l.extDict || l.externalDict) : (l.extTrans || l.externalTranslator));
       var r = ExtLinks.build(kind === 'dict' ? 'dict' : 'translator', cfg, {
-        word: sel.text, from: lang, to: state.settings.lang, nameOf: languageEnglishName
+        word: sel.text, from: lang, to: to, nameOf: languageEnglishName
       });
       if (r.error === 'unsupported') { UI.toast(I18N.t('platformUnsupported'), 'warn'); return; }
       if (r.error) { UI.toast(I18N.t('notConfigured'), 'warn'); return; }
@@ -679,7 +695,7 @@
   function setReaderState(st, msg) {
     $('readerLoading').hidden = st !== 'loading';
     $('readerError').hidden = st !== 'error';
-    if (st === 'error') { $('readerErrorMsg').textContent = msg || ''; $('rtb').classList.remove('hidden'); }
+    if (st === 'error') { $('readerErrorMsg').textContent = msg || ''; state.chrome = true; updateImmersive(); }
   }
 
   function openReader(bookId) {
@@ -689,7 +705,7 @@
     state.pendingProgress = null;
     $('noOpenBook').hidden = true;
     $('readerRoot').hidden = false;
-    $('rtb').classList.remove('hidden');
+    state.chrome = false; clearTimeout(state.chromeTimer);
     showTab('read');
     setReaderState('loading');
 
@@ -714,7 +730,7 @@
         if ('wakeLock' in navigator) {
           navigator.wakeLock.request('screen').then(function (l) { state.wakeLock = l; }).catch(function () {});
         }
-        resolveStudyLang();
+        applyBookLang(book);
       });
     });
 
@@ -736,6 +752,7 @@
     closeDictSheet();
     state.openBookId = null;
     state.pendingProgress = null;
+    updateImmersive();
     document.getElementById('readerRoot').hidden = true;
     document.getElementById('noOpenBook').hidden = false;
     if (state.wakeLock) { try { state.wakeLock.release(); } catch (e) {} state.wakeLock = null; }
@@ -743,20 +760,116 @@
     refreshLibrary();
   }
 
-  /** Collapsible display bar (ReadEra-style): opened from the toolbar button or the handle above the tab bar. */
+  // ===================== READER CHROME (auto-hide) =====================
+  function updateImmersive() {
+    var on = document.body.getAttribute('data-active-tab') === 'read' && !!state.openBookId && !state.chrome;
+    document.body.classList.toggle('reader-immersive', on);
+  }
+
+  /** Shows / hides the top bar and the tab bar. Shown bars hide again by themselves after 5 s (unless the display bar is open). */
+  function setChrome(visible) {
+    state.chrome = !!visible;
+    clearTimeout(state.chromeTimer);
+    updateImmersive();
+    if (visible && $('qbarPanel').hidden) {
+      state.chromeTimer = setTimeout(function () {
+        if (!$('qbarPanel').hidden) return;
+        state.chrome = false; updateImmersive();
+      }, 5000);
+    }
+  }
+
+  /** Collapsible display bar (ReadEra-style): opened from the toolbar button; sits above the tab bar. */
   function setQbar(open) {
     var panel = $('qbarPanel'); if (!panel) return;
     panel.hidden = !open;
     $('qbar').setAttribute('data-open', String(!!open));
-    ['qbarBtn', 'qbarHandle'].forEach(function (id) { var b = $(id); if (b) b.setAttribute('aria-expanded', String(!!open)); });
+    var b = $('qbarBtn'); if (b) b.setAttribute('aria-expanded', String(!!open));
+    if (open) { state.chrome = true; clearTimeout(state.chromeTimer); updateImmersive(); }
+    else setChrome(true);
   }
 
-  /** Study language of the open book: the one chosen in Settings, else the first configured, else English. */
-  function resolveStudyLang() {
-    return listLanguages().then(function (ls) {
-      var want = state.settings.studyLang;
-      state.currentLangCode = (want && ls.some(function (l) { return l.code === want; })) ? want : (ls.length ? ls[0].code : 'en');
+  // ===================== LANGUAGES OF A BOOK =====================
+  function nativeCode() { return state.settings.nativeLang || state.settings.lang || 'en'; }
+
+  /** Source language of a book: its own setting, else the default chosen in Settings, else the first configured language. */
+  function bookLangFor(book, langs) {
+    if (book && book.langCode) return book.langCode;
+    var want = state.settings.studyLang;
+    if (want && langs.some(function (l) { return l.code === want; })) return want;
+    return langs.length ? langs[0].code : 'en';
+  }
+
+  function applyBookLang(book) {
+    return Promise.all([listLanguages(), db.dictionaries.toArray()]).then(function (r) {
+      state.currentLangCode = bookLangFor(book, r[0]);
+      fillBookLang(r[1]);
     }).catch(function () { state.currentLangCode = 'en'; });
+  }
+
+  /** Re-evaluates the language of the open book (e.g. after the languages list changed). */
+  function resolveStudyLang() {
+    return (state.openBookId ? getBook(state.openBookId) : Promise.resolve(null)).then(applyBookLang);
+  }
+
+  function fillBookLang(dicts) {
+    var sel = $('bookLang'); if (!sel) return;
+    var have = {}; (dicts || []).forEach(function (d) { have[d.langCode] = 1; });
+    sel.textContent = '';
+    LANGUAGES.forEach(function (l) {
+      var o = document.createElement('option'); o.value = l[0];
+      o.textContent = l[1] + ' (' + l[0] + ')' + (have[l[0]] ? ' ✓' : '');
+      sel.appendChild(o);
+    });
+    if (!Array.prototype.some.call(sel.options, function (o) { return o.value === state.currentLangCode; })) {
+      var x = document.createElement('option'); x.value = x.textContent = state.currentLangCode; sel.appendChild(x);
+    }
+    sel.value = state.currentLangCode;
+  }
+
+  function bindBookLang() {
+    var sel = $('bookLang'); if (!sel) return;
+    sel.addEventListener('change', function () {
+      state.currentLangCode = sel.value;                       // dictionary + translation pair follow at once
+      if (state.openBookId) db.books.update(Number(state.openBookId), { langCode: sel.value }).catch(function () {});
+    });
+  }
+
+  function renderNativeSelect() {
+    var sel = $('setNative'); if (!sel) return;
+    sel.textContent = '';
+    LANGUAGES.forEach(function (l) {
+      var o = document.createElement('option'); o.value = l[0]; o.textContent = l[1] + ' (' + l[0] + ')'; sel.appendChild(o);
+    });
+    sel.value = nativeCode();
+  }
+
+  // ===================== OFFLINE STATUS =====================
+  function swMessage(type) {
+    return navigator.serviceWorker.ready.then(function (reg) {
+      return new Promise(function (resolve) {
+        if (!reg.active) { resolve(null); return; }
+        var ch = new MessageChannel();
+        ch.port1.onmessage = function (e) { resolve(e.data); };
+        reg.active.postMessage({ type: type }, [ch.port2]);
+      });
+    });
+  }
+
+  /** Shows whether the app is fully cached for offline use; fill=true also downloads whatever is still missing. */
+  function refreshOfflineStatus(fill) {
+    var el = $('offlineStatus'); if (!el) return;
+    if (!('serviceWorker' in navigator) || !window.isSecureContext) { el.textContent = I18N.t('offlineNoSW'); return; }
+    el.textContent = '…';
+    var timeout = new Promise(function (r) { setTimeout(function () { r(null); }, fill ? 90000 : 8000); });
+    Promise.race([swMessage(fill ? 'FILL' : 'STATUS'), timeout]).then(function (st) {
+      if (!st) { el.textContent = I18N.t('offlineNotReady'); return; }
+      el.textContent = st.ready ? tf('offlineReady', st.cached, st.total) : tf('offlineMissing', st.coreMissing);
+    }).catch(function () { el.textContent = I18N.t('offlineNotReady'); });
+  }
+
+  function bindOffline() {
+    var b = $('offlineBtn'); if (b) b.addEventListener('click', function () { refreshOfflineStatus(true); });
   }
 
   // ===================== SETTINGS =====================
@@ -925,6 +1038,8 @@
   }
 
   function bindDisplaySettings() {
+    var nat = $('setNative');
+    if (nat) nat.addEventListener('change', function () { state.settings.nativeLang = nat.value; setSetting('nativeLang', nat.value); });
     var sw = $('glossOn');
     if (sw) sw.addEventListener('click', function () {
       state.settings.glossOn = !state.settings.glossOn;
@@ -1045,7 +1160,7 @@
           iconBtn('edit', I18N.t('edit'), '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>') +
           iconBtn('del', I18N.t('delete'), '<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>');
         row.querySelector('input').addEventListener('change', function () {
-          state.settings.studyLang = l.code; setSetting('studyLang', l.code); state.currentLangCode = l.code;
+          state.settings.studyLang = l.code; setSetting('studyLang', l.code); resolveStudyLang();
         });
         row.querySelector('[data-act="edit"]').addEventListener('click', function () { openLangModal(l); });
         row.querySelector('[data-act="del"]').addEventListener('click', function () {
@@ -1137,7 +1252,7 @@
         if (!dictFile) { window.__closeLangModal(); return; }
         return importDictionary(code, dictFile).then(function (r) {
           UI.toast(tf('dictImported', r.count, r.name), 'success', 5000);
-          window.__closeLangModal(); refreshLanguages();
+          window.__closeLangModal(); refreshLanguages(); resolveStudyLang();
         });
       }).catch(function (err) { UI.toast(I18N.t('importError') + ': ' + err.message, 'error', 7000); });
     });

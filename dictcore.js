@@ -84,6 +84,23 @@
   var u8dec = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
   function utf8(u8) { return u8dec.decode(u8); }
 
+  /** Decodes text files of unknown encoding: BOMs (UTF-8 / UTF-16), strict UTF-8, then windows-1251 / windows-1252. */
+  function decodeText(u8) {
+    if (u8[0] === 0xEF && u8[1] === 0xBB && u8[2] === 0xBF) return new TextDecoder('utf-8').decode(u8.subarray(3));
+    if (u8[0] === 0xFF && u8[1] === 0xFE) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+    if (u8[0] === 0xFE && u8[1] === 0xFF) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(u8); } catch (e) {}
+    var hi = 0, cyr = 0;                                   // many bytes in 0xC0–0xFF → most likely Cyrillic windows-1251
+    for (var i = 0; i < Math.min(u8.length, 4000); i++) { if (u8[i] >= 0x80) hi++; if (u8[i] >= 0xC0) cyr++; }
+    return new TextDecoder(hi && cyr / hi > 0.6 ? 'windows-1251' : 'windows-1252').decode(u8);
+  }
+
+  /** True when the text looks like a tab-separated word list, whatever the file is called. */
+  function looksLikeTsv(text) {
+    var lines = text.split(/\r?\n/).slice(0, 50).filter(function (l) { return l.trim(); });
+    return lines.length > 0 && lines.filter(function (l) { return l.indexOf('\t') > 0; }).length >= Math.ceil(lines.length / 2);
+  }
+
   // ===================== TSV =====================
   /** Word<TAB>Transcription<TAB>Translation. Two columns are tolerated (Word<TAB>Translation). */
   function parseTsv(text) {
@@ -160,24 +177,69 @@
     return fields;
   }
 
-  /** One article → { t: transcription, d: definition text }. */
-  function articleToEntry(buf, seq) {
-    var fields = readFields(buf, seq), phon = '', parts = [], sniff = '';
+  // ----- minimal output: ONLY the phonetic transcription and the translations (no long definitions) -----
+  var POS = '(?:noun|verb|adjective|adverb|pronoun|preposition|conjunction|interjection|numeral|particle|article|prefix|suffix|abbreviation|' +
+            'adj|adv|pron|prep|conj|interj|num|art|abbr|n|v|a|m|f|mf|nt|neut|pl|sg|sing|plural|masc|fem|vt|vi|vr|vb)';
+  var POS_LEAD = new RegExp('^' + POS + '\\b[.:)]?\\s*', 'i');
+  var POS_ONLY = new RegExp('^(?:' + POS + '[.,;:)\\s/]*)+$', 'i');
+
+  /**
+   * Turns the readable text of one article into a short list of translations.
+   * Drops: part-of-speech labels, numbering, (parenthetical glosses), [brackets], example sentences and
+   * over-long explanations (when shorter alternatives exist). Result: ['Hund', 'Rüde'].
+   */
+  function minimizeText(text, headword) {
+    var out = [], seen = {}, longLines = [];
+    String(text || '').split('\n').forEach(function (line) {
+      line = line.replace(/^[\s•·\-–—*\u25CF]+/, '').replace(/^(?:\d+|[a-z])[.)]\s+/i, '');
+      var raw = line;
+      line = line.replace(/\([^)]*\)|\[[^\]]*\]|\{[^}]*\}|<[^>]*>|\u27E8[^\u27E9]*\u27E9/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!line) return;
+      if (/^(?:example|examples|e\.g\.|usage|synonyms?|see also|cf\.|ant\.)\b/i.test(line)) return;
+      if (/[\u201C\u201D\u00AB\u00BB"]/.test(raw) && line.split(' ').length > 3) return;      // quoted example sentence
+      if (/^[–—»]/.test(raw)) return;
+      line = line.replace(POS_LEAD, '').trim();
+      if (!line || POS_ONLY.test(line)) return;
+      // an explanation, not a translation: many words per comma/semicolon piece (or simply very long)
+      var words = line.split(' ').length, pieces = line.split(/[;,\u3001\u060C]/).length;
+      if (words > 14 || (words > 8 && words / pieces >= 3)) { longLines.push(line); return; }
+      line.split(/[;,\u3001\u060C]/).forEach(function (c) {
+        c = c.replace(POS_LEAD, '').replace(/[\s.:]+$/, '').trim();
+        if (!c || POS_ONLY.test(c)) return;
+        var k = norm(c).key;
+        if (!k || seen[k]) return;                                   // (cognates equal to the headword are valid translations)
+        seen[k] = 1; out.push(c);
+      });
+    });
+    var short = out.filter(function (c) { return c.split(' ').length <= 6; });
+    if (short.length) out = short;                                    // explanations only when nothing short exists
+    if (!out.length && longLines.length) out = [longLines[0]];        // only an explanation exists: keep its start
+    out = out.slice(0, 10).map(function (c) { return c.length > 80 ? c.slice(0, 79).replace(/\s+\S*$/, '') + '…' : c; });
+    return out;
+  }
+
+  /** One article → { t: transcription, d: translations (one per line) }. */
+  function articleToEntry(buf, seq, headword) {
+    var fields = readFields(buf, seq), phon = '', texts = [], sniff = '', sniffRaw = '';
     for (var i = 0; i < fields.length; i++) {
       var f = fields[i], raw = utf8(f.data).replace(/\0+$/, '');
       if (PHON_TYPES.indexOf(f.type) > -1) { if (!phon) phon = raw.trim(); continue; }
       if (TEXT_TYPES.indexOf(f.type) < 0) continue;       // images, sounds, resource lists
+      if (f.type !== 'm' && f.type !== 'l') raw = raw.replace(/<\s*(ex|example|exm)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '');   // example sentences
       var text = (f.type === 'm' || f.type === 'l') ? raw.replace(/\r/g, '').trim() : stripMarkup(raw);
-      if (!sniff) sniff = sniffTranscription(raw, text);
-      if (text) parts.push(text);
+      if (!sniff) { sniff = sniffTranscription(raw, text); sniffRaw = sniff; }
+      if (text) texts.push(text);
     }
-    var d = parts.join('\n');
+    var all = texts.join('\n');
     if (!phon && sniff) {
       phon = sniff;
-      // remove the sniffed "/ipa/" from the head of the text so it is not shown twice
-      d = d.replace(/^\s*(?:\/[^\/\n]{1,60}\/|\[[^\]\n]{1,60}\])\s*/, '');
+      // remove the sniffed transcription from the text so it is neither shown twice nor taken for a translation
+      var i0 = all.indexOf(sniffRaw);
+      if (i0 > -1) all = (all.slice(0, i0).replace(/[\/\[]\s*$/, '') + all.slice(i0 + sniffRaw.length).replace(/^\s*[\/\]]/, '')).trim();
     }
-    return { t: phon, d: d.trim() };
+    var tr = minimizeText(all, headword);
+    if (!tr.length && all) tr = [all.split('\n')[0].replace(/\s+/g, ' ').slice(0, 80)];   // nothing parsable: keep the first line, shortened
+    return { t: phon.replace(/^[\/\[]|[\/\]]$/g, '').trim(), d: tr.join('\n') };
   }
 
   /**
@@ -186,7 +248,7 @@
    * onProgress(fraction 0..1) is optional.
    */
   function parseStarDict(files, onProgress) {
-    var ifo = parseIfo(typeof files.ifo === 'string' ? files.ifo : utf8(files.ifo));
+    var ifo = parseIfo(typeof files.ifo === 'string' ? files.ifo : decodeText(files.ifo));
     var seq = ifo.sametypesequence || '';
     var off64 = String(ifo.idxoffsetbits || '32') === '64';
     var idx = files.idx, dict = files.dict, dv = new DataView(idx.buffer, idx.byteOffset, idx.byteLength);
@@ -200,7 +262,7 @@
       pos = e + 1 + step;
       heads.push(word);
       if (off + size <= dict.length && size > 0) {
-        var ent = articleToEntry(dict.subarray(off, off + size), seq);
+        var ent = articleToEntry(dict.subarray(off, off + size), seq, word);
         if (word && (ent.d || ent.t)) out.push({ w: word, t: ent.t, d: ent.d });
       }
       if (onProgress && (++n & 4095) === 0 && total) onProgress(Math.min(1, n / total));
@@ -312,52 +374,72 @@
     return (d[0] === 0x1F && d[1] === 0x8B) ? gunzip(d) : d;
   }
 
+  var baseName = function (n) { return String(n).replace(/\\/g, '/').split('/').pop(); };
+  var dirName = function (n) { n = String(n).replace(/\\/g, '/'); var i = n.lastIndexOf('/'); return i < 0 ? '' : n.slice(0, i); };
+  /** Archive junk that must never be mistaken for dictionary files (macOS resource forks, hidden files). */
+  var isJunk = function (n) { var b = baseName(n); return /(^|\/)__MACOSX\//.test(n) || b.charAt(0) === '.' || b === 'Thumbs.db'; };
+  var stemOf = function (n) {
+    var b = baseName(n).toLowerCase();
+    return dirName(n).toLowerCase() + '/' + b.replace(/\.(ifo|idx\.gz|idx|dict\.dz|dict\.gz|dict|syn\.dz|syn\.gz|syn)$/, '');
+  };
+  var kindOf = function (n) {
+    var b = baseName(n).toLowerCase();
+    if (/\.ifo$/.test(b)) return 'ifo';
+    if (/\.idx(\.gz)?$/.test(b)) return 'idx';
+    if (/\.dict(\.dz|\.gz)?$/.test(b)) return 'dict';
+    if (/\.syn(\.dz|\.gz)?$/.test(b)) return 'syn';
+    return '';
+  };
+
   /**
-   * Finds the dictionary inside an unpacked file list.
+   * Finds the dictionary inside an unpacked file list — independent of file names, letter case, folders or junk.
+   * Files are grouped by folder + stem (name without the StarDict suffix); if the names of the parts do not match
+   * (e.g. renamed files), the unique .ifo/.idx/.dict files of the archive are used instead.
    * → { format: 'stardict', entries, name, wordcount } | { format: 'tsv', entries } — or throws a readable Error.
    */
   function entriesFromFiles(list, onProgress) {
-    var by = function (pred) { return list.filter(function (f) { return pred(f.name); }); };
-    var ifos = by(function (n) { return ends(n, '.ifo'); });
-    if (ifos.length) {
-      // Several dictionaries in one archive: take the largest .ifo-group (rare); the first one is fine for 1:1 archives.
-      var ifo = ifos[0], base = ifo.name.slice(0, -4);
-      var pick = function (sufs) {
-        for (var i = 0; i < sufs.length; i++) {
-          var f = list.filter(function (x) { return x.name === base + sufs[i]; })[0];
-          if (f) return f;
-        }
-        return null;
-      };
-      var idx = pick(['.idx', '.idx.gz']), dict = pick(['.dict.dz', '.dict', '.dict.gz']), syn = pick(['.syn', '.syn.dz', '.syn.gz']);
-      if (!idx || !dict) throw new Error('Incomplete StarDict archive: need .ifo, .idx and .dict(.dz) with the same name.');
-      var info = parseIfo(utf8(ifo.data));
+    list = list.filter(function (f) { return !isJunk(f.name); });
+    var groups = {}, byKind = { ifo: [], idx: [], dict: [], syn: [] };
+    list.forEach(function (f) {
+      var k = kindOf(f.name); if (!k) return;
+      byKind[k].push(f);
+      var g = groups[stemOf(f.name)] || (groups[stemOf(f.name)] = {}); g[k] = f;
+    });
+    var best = null;
+    Object.keys(groups).forEach(function (k) { var g = groups[k]; if (g.ifo && g.idx && g.dict && (!best || g.dict.data.length > best.dict.data.length)) best = g; });
+    if (!best && byKind.idx.length && byKind.dict.length) {            // names do not match: take the largest of each kind
+      var big = function (a) { return a.slice().sort(function (x, y) { return y.data.length - x.data.length; })[0]; };
+      best = { ifo: byKind.ifo[0] || null, idx: big(byKind.idx), dict: big(byKind.dict), syn: byKind.syn[0] || null };
+    }
+    if (best) {
+      var info = best.ifo ? parseIfo(decodeText(best.ifo.data).replace(/\0/g, '')) : {};
       var entries = parseStarDict({
-        ifo: ifo.data, idx: maybeGunzip(idx), dict: maybeGunzip(dict), syn: syn ? maybeGunzip(syn) : null
+        ifo: best.ifo ? decodeText(best.ifo.data) : '', idx: maybeGunzip(best.idx), dict: maybeGunzip(best.dict),
+        syn: best.syn ? maybeGunzip(best.syn) : null
       }, onProgress);
-      return { format: 'stardict', entries: entries, name: info.bookname || base, wordcount: Number(info.wordcount) || entries.length };
+      return { format: 'stardict', entries: entries, name: info.bookname || (best.ifo ? baseName(best.ifo.name) : baseName(best.idx.name)), wordcount: Number(info.wordcount) || entries.length };
     }
-    var txt = by(function (n) { return /\.(tsv|txt|csv|json)$/i.test(n); })[0];
-    if (txt) {
-      var ext = txt.name.split('.').pop().toLowerCase();
-      var text = utf8(txt.data);
-      var e2 = ext === 'tsv' ? parseTsv(text) : (ext === 'txt' && text.indexOf('\t') > -1 ? parseTsv(text) : parseLegacy(text, ext));
-      return { format: ext === 'tsv' || (ext === 'txt' && text.indexOf('\t') > -1) ? 'tsv' : 'legacy', entries: e2, name: txt.name, wordcount: e2.length };
-    }
-    throw new Error('No StarDict files (.ifo/.idx/.dict.dz) or TSV found in this file.');
+    // no StarDict: a text word list inside the archive (any name; tsv first)
+    var cand = list.filter(function (f) { return /\.(tsv|tab|txt|csv|json)$/i.test(f.name); })
+      .sort(function (a, b) { return (/\.tsv$/i.test(b.name) ? 1 : 0) - (/\.tsv$/i.test(a.name) ? 1 : 0) || b.data.length - a.data.length; })[0];
+    if (cand) return textDictionary(cand.data, cand.name);
+    var found = list.slice(0, 8).map(function (f) { return baseName(f.name); }).join(', ');
+    throw new Error('No dictionary found. Expected StarDict files (.ifo, .idx, .dict.dz) or a .tsv. The file contains: ' + (found || 'nothing') + '.');
   }
 
-  /** Whole pipeline for one picked file (bytes + name). */
+  /** Word list from raw bytes: TSV (Word<TAB>Transcription<TAB>Translation) detected by content, else legacy json/csv/txt. */
+  function textDictionary(u8, name) {
+    var text = decodeText(u8), ext = String(name).split('.').pop().toLowerCase(), entries, format;
+    if (ext === 'json') { entries = parseLegacy(text, 'json'); format = 'legacy'; }
+    else if (ext === 'tsv' || ext === 'tab' || looksLikeTsv(text)) { entries = parseTsv(text); format = 'tsv'; }
+    else { entries = parseLegacy(text, ext); format = 'legacy'; }
+    return { format: format, entries: entries, name: baseName(name), wordcount: entries.length };
+  }
+
+  /** Whole pipeline for one picked file (bytes + name). The file name only matters as a hint for plain text files. */
   function parseFile(u8, fileName, onProgress) {
     var name = String(fileName || 'dictionary');
-    var kind = magic(u8);
-    if (kind === 'plain') {
-      var ext = name.split('.').pop().toLowerCase();
-      var text = utf8(u8);
-      var isTsv = ext === 'tsv' || (ext === 'txt' && text.indexOf('\t') > -1);
-      var entries = isTsv ? parseTsv(text) : parseLegacy(text, ext);
-      return Promise.resolve({ format: isTsv ? 'tsv' : 'legacy', entries: entries, name: name, wordcount: entries.length });
-    }
+    if (magic(u8) === 'plain') return Promise.resolve(textDictionary(u8, name));
     return unpack(u8, name).then(function (list) { return entriesFromFiles(list, onProgress); });
   }
 
@@ -399,7 +481,7 @@
     setLibs: setLibs, norm: norm, candidates: candidates, stripMarkup: stripMarkup,
     parseTsv: parseTsv, parseLegacy: parseLegacy, parseStarDict: parseStarDict, parseIfo: parseIfo,
     untar: untar, unpack: unpack, parseFile: parseFile, entriesFromFiles: entriesFromFiles,
-    buildRows: buildRows, shortGloss: shortGloss, magic: magic
+    buildRows: buildRows, shortGloss: shortGloss, magic: magic, decodeText: decodeText, minimizeText: minimizeText
   };
   root.DictCore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

@@ -3,6 +3,10 @@ var I18N = (function () {
 
   var dict = {
     en: {
+      nativeLanguage: 'Native language', nativeHint: 'Translations (external translators and dictionaries) go into this language. Set the language of each book in the reader: display settings → Book language.',
+      bookLanguage: 'Book language', sameLang: 'Source and target language are both {0}. Set this book’s language (reader → display settings → Book language) or your native language (Settings).',
+      offlineStatus: 'Offline mode', offlineCheck: 'Check offline files', offlineReady: 'Ready ✓ ({0}/{1} files)', offlineMissing: 'Not ready: {0} files missing. Connect and tap “Check offline files”.',
+      offlineNotReady: 'Not installed yet. Open the app once over HTTPS and wait a few seconds.', offlineNoSW: 'Unavailable: offline mode needs HTTPS (or localhost).',
       start: 'Start', statNew: 'New', statLearning: 'Learning', stReview: 'Review', stRelearning: 'Relearning',
       newPerSession: 'New words per session', quizLeft: 'Left: {0}',
       quizDoneSrs: 'Session complete.\nAnswers: {0} · Forgotten: {1}\nRecalled: {2} of {3} cards.',
@@ -25,7 +29,7 @@ var I18N = (function () {
       placeholderHint: 'Placeholders: {word} or {text}, {from}, {to}',
       customUrl: 'Custom URL scheme', none: 'none', grpApps: 'Native apps', grpLocal: 'Offline / local apps', grpWeb: 'Web services',
       platformUnsupported: 'This option is not available on this device.',
-      entries: 'entries', noDictShort: 'no dictionary', useForReading: 'Use for reading', edit: 'Edit',
+      entries: 'entries', noDictShort: 'no dictionary', useForReading: 'Default language for new books', edit: 'Edit',
       dictCurrent: 'Current dictionary: {0} ({1} entries). Choosing a file replaces it.',
       dictImported: 'Dictionary imported: {1} ({0} entries).', noWorker: 'Web Workers are not available in this browser.',
       imp_read: 'Reading file…', imp_unpack: 'Unpacking…', imp_parse: 'Parsing…', imp_index: 'Building index…', imp_store: 'Saving…',
@@ -72,6 +76,10 @@ var I18N = (function () {
       dictTitle: 'Book dictionary', sortAdded: 'Added', sortTitle: 'Title', sortName: 'Name', noLanguages: 'No languages yet.'
     },
     ru: {
+      nativeLanguage: 'Родной язык', nativeHint: 'Переводы (внешние переводчики и словари) выполняются на этот язык. Язык каждой книги задаётся в читалке: настройки отображения → Язык книги.',
+      bookLanguage: 'Язык книги', sameLang: 'Исходный и целевой язык совпадают ({0}). Укажите язык этой книги (читалка → настройки отображения → Язык книги) или родной язык (Настройки).',
+      offlineStatus: 'Офлайн-режим', offlineCheck: 'Проверить офлайн-файлы', offlineReady: 'Готово ✓ ({0}/{1} файлов)', offlineMissing: 'Не готово: не хватает файлов — {0}. Подключитесь к сети и нажмите «Проверить офлайн-файлы».',
+      offlineNotReady: 'Ещё не установлено. Откройте приложение один раз по HTTPS и подождите несколько секунд.', offlineNoSW: 'Недоступно: для офлайн-режима нужен HTTPS (или localhost).',
       start: 'Начать', statNew: 'Новые', statLearning: 'Изучаются', stReview: 'Повтор', stRelearning: 'Заново',
       newPerSession: 'Новых слов за сессию', quizLeft: 'Осталось: {0}',
       quizDoneSrs: 'Сессия завершена.\nОтветов: {0} · Забыто: {1}\nВспомнено: {2} из {3} карточек.',
@@ -94,7 +102,7 @@ var I18N = (function () {
       placeholderHint: 'Подстановки: {word} или {text}, {from}, {to}',
       customUrl: 'Свой URL-адрес / схема', none: 'нет', grpApps: 'Приложения', grpLocal: 'Офлайн-приложения', grpWeb: 'Веб-сервисы',
       platformUnsupported: 'Этот вариант недоступен на этом устройстве.',
-      entries: 'статей', noDictShort: 'нет словаря', useForReading: 'Использовать при чтении', edit: 'Изменить',
+      entries: 'статей', noDictShort: 'нет словаря', useForReading: 'Язык по умолчанию для новых книг', edit: 'Изменить',
       dictCurrent: 'Текущий словарь: {0} ({1} статей). Выбор файла заменит его.',
       dictImported: 'Словарь импортирован: {1} ({0} статей).', noWorker: 'Web Workers недоступны в этом браузере.',
       imp_read: 'Чтение файла…', imp_unpack: 'Распаковка…', imp_parse: 'Разбор…', imp_index: 'Построение индекса…', imp_store: 'Сохранение…',

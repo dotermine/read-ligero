@@ -38,7 +38,7 @@ named files, which is why Chrome refused to treat it as installable.
 | IndexedDB schema v5, persistent storage, backup | `dbschema.js`, `db.js`, `backup.js`, Settings → *Backup & storage* |
 | Dictionary import (WikDict / FreeDict / TSV) in a Web Worker | `dictworker.js`, `dictcore.js`; Settings → Study languages → Add/Edit |
 | Gloss + highlight settings | Settings → *Vocabulary highlighting* |
-| Book display (screen mode, orientation, zoom, position, lock) | `display.js` + reader bar + Settings → *Book display* (one shared state) |
+| Book display (screen mode, orientation, zoom, lock) | `display.js` + reader bar + Settings → *Book display* (one shared state) |
 | Isolated zoom (UI chrome stays 100 %) | `#bookStage` in `index.html`, `reader.js`, `style.css` |
 | External dictionary / translator presets | `extlinks.js` |
 | Dictionary bottom sheet + prefilled *New word* (no autofocus) | `app.js` (`openDictSheet`, `openWordModal`) |
@@ -74,13 +74,15 @@ files first and import afterwards, to get reading progress back.
 npm test                       # portable unit tests (SRS engine, dictionary parsers, external-link builder)
 python3 tests/make-fixtures.py # (re)build StarDict/TSV fixtures
 # Browser end-to-end tests (Playwright + Chromium; edit the require() path at the top for your machine):
-python3 -m http.server 8765 &  node tests/e2e-smoke.js && node tests/e2e-features.js && node tests/e2e-formats.js && node tests/e2e-migration.js
+python3 -m http.server 8765 &  node tests/e2e-smoke.js && node tests/e2e-features.js && node tests/e2e-round3.js && node tests/e2e-migration.js
+# offline on a host that redirects /index.html → / (Netlify / Cloudflare Pages style):
+node tests/redirect-server.js . 8780 &  node tests/e2e-offline.js http://localhost:8780/
 ```
 
 ## Known limitations — please read
 
-* **Not tested on a real phone.** Everything above was verified in desktop Chromium (390×780 viewport) incl. offline reload, install
-  prerequisites, worker import, PDF/EPUB/TXT zoom, migration. Android *intent* launches, real Fullscreen/orientation lock and touch pinch
+* **Not tested on a real phone.** Everything was verified in desktop Chromium (390×780 viewport) incl. offline cold start, install
+  prerequisites, worker import, PDF/EPUB/TXT zoom and positions, migration. Android *intent* launches, real Fullscreen/orientation lock and touch pinch
   need a check on your device.
 * **External app links:** translator "app" entries use Android `intent:` URLs with the app package and a web fallback; iOS/desktop use
   the web URL (universal link if the app supports it). GoldenDict/StarDict on Android use the ColorDict intent
@@ -97,3 +99,34 @@ python3 -m http.server 8765 &  node tests/e2e-smoke.js && node tests/e2e-feature
 * New UI strings are translated to English and Russian; other interface languages fall back to English for those strings.
 * Dictionary parsing keeps the whole dictionary in memory inside the worker (fine for typical WikDict/FreeDict sizes; very large
   multi-hundred-MB dictionaries may exhaust memory on low-end phones).
+
+
+## Round 3 — what changed and why
+
+**Offline (critical).** Root cause found by reproducing it: hosts such as Netlify, Cloudflare Pages and Firebase redirect
+`/index.html → /`. The previous service worker cached that *redirected* response and served it to navigations, which browsers
+reject — the installed app then failed to start offline. Now: responses are stored as clean copies, navigations are answered with
+the cached shell (`/`, `/index.html`, `?query` all work), and installation is two-tier — *core* files (29) are fetched with retries
+and all-or-nothing, *optional* files (pdf.js CMaps/fonts, xz decoder; 186) are best-effort and can never block offline mode.
+Settings → *Backup & storage* → **Offline mode** shows `Ready ✓ (215/215 files)` and has a *Check offline files* button.
+Offline needs HTTPS (or localhost); on plain `http://192.168…` the browser disables service workers and the status says so.
+Run `node tools/gen-precache.js` before every deploy.
+
+**Reading position.** Saved with every scroll (debounced), when the app is hidden/closed, and — new — read fresh from the reader
+at that moment: text/FB2 = paragraph + fraction (survives zoom/rotation), PDF = page + fraction, EPUB = character-level CFI.
+A position is never saved before the book finished restoring the old one.
+
+**Dictionaries.** Parsing no longer depends on file names (renamed parts, UPPERCASE extensions, folders, `__MACOSX` junk, real
+`.dict.dz` dictzip headers). TSV files may be UTF-8/UTF-16/windows-1251 and have any extension. Only the transcription and the
+translations are kept: part-of-speech labels, numbering, `(glosses)`, example sentences and long English explanations are dropped
+(heuristic — if an article has nothing but an explanation, its first words are kept). Re-import existing dictionaries to apply it.
+
+**Languages.** Settings → *Native language* (default: interface language) is the translation target for external translators.
+The source language is chosen **per book** in the reader (display bar → *Book language*); the dictionary and the
+`{from}`/`{to}` pair follow it. A translator call with identical source and target is refused with an explanation.
+
+**Reader.** Top bar and tab bar auto-hide while reading; tap the very top or bottom edge (72 px) to show them, tap the middle to
+hide (they also hide by themselves after 5 s). `qbarHandle` and `bookOffset` are removed: pan zoomed pages by dragging with a
+finger or by holding the left mouse button. Zoom is continuous (1 % steps) and real-time: pinch/slider scale the rendered pages with a
+GPU transform, then the page is re-rendered sharply when the gesture ends. A single tap on a word that was already looked up or saved opens the action menu.
+The word popup and flashcards scroll when their content is long.

@@ -5,7 +5,8 @@
  * Messages out:  { type:'progress', stage, pct }  ·  { type:'done', count, format, name }  ·  { type:'error', message }
  */
 'use strict';
-importScripts('lib/dexie.min.js', 'lib/jszip.min.js', 'lib/fflate.js', 'lib/xz-decompress.min.js', 'dictcore.js', 'dbschema.js');
+importScripts('lib/dexie.min.js', 'lib/jszip.min.js', 'lib/fflate.js', 'dictcore.js', 'dbschema.js');
+try { importScripts('lib/xz-decompress.min.js'); } catch (e) { /* optional tier of the offline cache: only .tar.xz needs it */ }
 DictCore.setLibs({ fflate: self.fflate, JSZip: self.JSZip, xz: self['xz-decompress'] });
 
 var CHUNK = 2000;

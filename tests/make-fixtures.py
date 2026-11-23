@@ -73,4 +73,33 @@ with zipfile.ZipFile(os.path.join(OUT, 'rus-eng.zip'), 'w') as z:
 
 open(os.path.join(OUT, 'local.tsv'), 'w', encoding='utf-8').write(
     "apple\t/ˈæp.əl/\tяблоко\nBread\t/bred/\tхлеб\nbad line without tabs\n\nCafé\t\tкафе; кофейня\n")
+# ---- robustness fixtures ----
+import zlib
+def dictzip(data):
+    """Real dictzip container: gzip with FEXTRA 'RA' subfield (what StarDict .dict.dz files look like)."""
+    co = zlib.compressobj(9, zlib.DEFLATED, -15); body = co.compress(data) + co.flush()
+    extra = b'RA' + struct.pack('<H', 6) + struct.pack('<HHH', 1, 58315, 1)
+    hdr = b'\x1f\x8b\x08\x04' + struct.pack('<I', 0) + b'\x00\x03' + struct.pack('<H', len(extra)) + extra
+    return hdr + body + struct.pack('<II', zlib.crc32(data) & 0xffffffff, len(data) & 0xffffffff)
+
+verbose = build_stardict('de-en', [
+    ('run', [('h', '<i>/rʌn/</i><ol><li><i>verb</i> laufen; rennen <ex>He runs fast. – Er rennt schnell.</ex></li>'
+                   '<li>(to operate) betreiben, führen</li>'
+                   '<li>to move quickly on foot, faster than walking, so that both feet leave the ground at some point of each stride</li></ol>')]),
+    ('bank', [('m', 'noun\n1. Bank (financial institution)\n2. Ufer, Böschung\n  "He sat on the bank." Er saß am Ufer.')]),
+], seq=None if False else 'h')
+vz = {k: (dictzip(open(os.path.join(OUT, 'x'), 'rb').read()) if False else v) for k, v in verbose.items()}
+# renamed parts + uppercase extensions + junk, all in one zip (names deliberately do NOT match each other)
+dz_dict = dictzip(gzip.decompress(verbose['de-en.dict.dz']))
+with zipfile.ZipFile(os.path.join(OUT, 'messy-names.zip'), 'w') as z:
+    z.writestr('__MACOSX/._de-en.ifo', b'\x00\x05\x16\x07junk')
+    z.writestr('Some Folder/Dictionary.IFO', verbose['de-en.ifo'])
+    z.writestr('Some Folder/other_name.IDX', verbose['de-en.idx'])
+    z.writestr('Some Folder/yet another.DICT.DZ', dz_dict)
+    z.writestr('readme.txt', 'hello')
+# plain .tsv with other encodings / names
+tsv = "apple\t/ˈæp.əl/\tяблоко\nbread\t\tхлеб\n"
+open(os.path.join(OUT, 'utf16.tsv'), 'wb').write(b'\xff\xfe' + tsv.encode('utf-16le'))
+open(os.path.join(OUT, 'cp1251.txt'), 'wb').write(("apple\t\tяблоко\nbread\t\tхлеб\nwater\t\tвода\n").encode('cp1251'))
+open(os.path.join(OUT, 'wordlist.dat'), 'w', encoding='utf-8').write(tsv)
 print('fixtures:', sorted(os.listdir(OUT)))

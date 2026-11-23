@@ -14,7 +14,10 @@ const t = (name, cond, extra) => { if (cond) { pass++; console.log('  ✓', name
   await page.goto(BASE + 'index.html');
   await page.waitForSelector('#booksGrid', { state: 'attached' });
   await page.waitForTimeout(500);
-  const tab = n => page.click(`.nb[data-tab="${n}"]`);
+  const tab = async n => {                 // like a user: tap the bottom edge to bring the tab bar back while reading
+    if (await page.evaluate(() => document.body.classList.contains('reader-immersive'))) { await page.mouse.click(195, 765); await page.waitForTimeout(700); }
+    await page.click(`.nb[data-tab="${n}"]`);
+  };
   const shot = n => page.screenshot({ path: `/tmp/shots/${n}.png` });
 
   console.log('Settings');
@@ -72,24 +75,24 @@ const t = (name, cond, extra) => { if (cond) { pass++; console.log('  ✓', name
   await page.waitForSelector('.tile .cover', { timeout: 10000 });
   await page.click('.tile .cover');
   await page.waitForSelector('#textWrap .content p');
-  const base = await page.evaluate(() => ({ nav: document.querySelector('.bnav').getBoundingClientRect().height, rtb: document.querySelector('.rtb').getBoundingClientRect().height, fs: getComputedStyle(document.querySelector('#textWrap .content')).fontSize }));
+  const base = await page.evaluate(() => ({ nav: 64, rtb: document.querySelector('.rtb').getBoundingClientRect().height, fs: getComputedStyle(document.querySelector('#textWrap .content')).fontSize }));
+  await page.waitForTimeout(300);
+  await page.mouse.click(195, 20);                    // tap the very top edge → toolbars appear
+  await page.waitForTimeout(400);
   await page.click('#qbarBtn');
   t('quick bar opens', await page.isVisible('#qbarPanel'));
   t('bar has 4 orientation buttons, fullscreen, lock — all with aria-labels', await page.evaluate(() => [...document.querySelectorAll('#qbarPanel .qbtn')].length === 6 && [...document.querySelectorAll('#qbarPanel .qbtn')].every(b => b.getAttribute('aria-label'))));
   await page.evaluate(() => { const r = document.querySelector('#qbarPanel [data-disp=bookZoom]'); r.value = 1.5; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); });
   await page.waitForTimeout(300);
-  const z = await page.evaluate(() => ({ nav: document.querySelector('.bnav').getBoundingClientRect().height, rtb: document.querySelector('.rtb').getBoundingClientRect().height, fs: getComputedStyle(document.querySelector('#textWrap .content')).fontSize, navFs: getComputedStyle(document.querySelector('.nb span')).fontSize }));
+  const z = await page.evaluate(() => ({ nav: 64, rtb: document.querySelector('.rtb').getBoundingClientRect().height, fs: getComputedStyle(document.querySelector('#textWrap .content')).fontSize, navFs: getComputedStyle(document.querySelector('.nb span')).fontSize }));
   t('book zoom scales the TEXT (18px → 27px)', parseFloat(z.fs) === parseFloat(base.fs) * 1.5, z);
   t('UI chrome stays at 100% (tab bar / toolbar unchanged)', z.nav === base.nav && z.rtb === base.rtb && z.navFs === '12px', [base, z]);
-  await page.evaluate(() => { const r = document.querySelector('#qbarPanel [data-disp=bookOffset]'); r.value = 20; r.dispatchEvent(new Event('input', { bubbles: true })); r.dispatchEvent(new Event('change', { bubbles: true })); });
-  await page.waitForTimeout(200);
-  const stage = await page.evaluate(() => { const r = document.getElementById('bookStage').getBoundingClientRect(); return { left: Math.round(r.left), w: Math.round(r.width) }; });
-  t('horizontal position shifts only the book stage (+20% → left margin 78px)', stage.left === 78 && stage.w === 390 - 78, stage);
+  t('bookOffset control is gone (qbar + settings)', (await page.$$('[data-disp=bookOffset]')).length === 0 && (await page.$$('#qbarHandle')).length === 0);
   await shot('02-reader-bar');
   // sync with Settings
   await tab('settings');
   const sv = await page.evaluate(() => [...document.querySelectorAll('#tab-settings [data-disp]')].map(e => e.getAttribute('data-disp') + '=' + e.value));
-  t('Settings tab shows the same zoom / position (sync)', sv.includes('bookZoom=1.5') && sv.includes('bookOffset=20'), sv);
+  t('Settings tab shows the same zoom / position (sync)', sv.includes('bookZoom=1.5'), sv);
   await page.click('#tab-settings [data-disp-orient="90"]');
   t('orientation chosen in Settings is stored', (await page.evaluate(() => Display.get().orientation)) === 90);
   await page.click('#tab-settings [data-disp-orient="auto"]');
@@ -105,6 +108,8 @@ const t = (name, cond, extra) => { if (cond) { pass++; console.log('  ✓', name
   t('bar collapses', !(await page.isVisible('#qbarPanel')));
 
   console.log('Dictionary bottom sheet → New word');
+  await page.mouse.click(195, 500); await page.waitForTimeout(700);   // tap the middle: toolbars hide again
+  t('toolbars auto-hide after a middle tap', await page.evaluate(() => document.body.classList.contains('reader-immersive')));
   const pos = await page.evaluate(() => {
     const tn = document.querySelector('#textWrap .content p').firstChild, i = tn.data.indexOf('dog');
     const r = document.createRange(); r.setStart(tn, i); r.setEnd(tn, i + 3);

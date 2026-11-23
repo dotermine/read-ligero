@@ -24,8 +24,9 @@ const rowsOf = async (file, lang = 'en') => { const r = await DC.parseFile(FX(fi
     assert.deepStrictEqual(map.get('dog').e[0].slice(0, 1), ['dog']);
     assert.ok(/Hund/.test(map.get('dog').e[0][2]) && /Rüde/.test(map.get('dog').e[0][2]));
     assert.strictEqual(map.get('café').fold, 'cafe');
+    assert.strictEqual(map.get('café').e[0][2], 'Kaffeehaus\nCafé');
     assert.ok(map.get('café').e[0][1].includes('kaˈfeː'));
-    assert.ok(/street & road/.test(map.get('straße').e[0][2]) && /Weg/.test(map.get('straße').e[0][2]));
+    assert.deepStrictEqual(map.get('straße').e[0][2].split('\n'), ['street & road', 'Weg']);
     assert.strictEqual(map.get('house').e.length, 2);                       // homographs merged into one row
     assert.strictEqual(map.get('house').e[0][1], 'haʊs');                   // class="ipa" sniffed
     assert.strictEqual(map.get('dogs').ref, 'dog');                         // synonym row
@@ -56,6 +57,27 @@ const rowsOf = async (file, lang = 'en') => { const r = await DC.parseFile(FX(fi
     assert.deepStrictEqual(map.get('apple').e[0], ['apple', '/ˈæp.əl/', 'яблоко']);
     assert.deepStrictEqual(map.get('bread').e[0], ['Bread', '/bred/', 'хлеб']);
     assert.strictEqual(map.get('café').e[0][2], 'кафе; кофейня');
+  });
+
+  await ok('minimal output: only transcription + translations (no English definitions / examples / POS)', async () => {
+    const { map } = await rowsOf('messy-names.zip', 'de');
+    const run = map.get('run').e[0];
+    assert.strictEqual(run[1], 'rʌn');
+    assert.deepStrictEqual(run[2].split('\n'), ['laufen', 'rennen', 'betreiben', 'führen']);          // long English explanation + example dropped
+    assert.deepStrictEqual(map.get('bank').e[0][2].split('\n'), ['Bank', 'Ufer', 'Böschung']);          // "noun", numbering, (gloss), quoted example dropped
+  });
+
+  await ok('file names do not matter: renamed parts, UPPERCASE extensions, folders, __MACOSX junk, real dictzip (FEXTRA)', async () => {
+    const r = await DC.parseFile(FX('messy-names.zip'), 'whatever.zip');
+    assert.strictEqual(r.format, 'stardict'); assert.strictEqual(r.entries.length, 2);
+  });
+
+  await ok('TSV: UTF-16 BOM, windows-1251, any file name / extension', async () => {
+    for (const [f, n] of [['utf16.tsv', 2], ['cp1251.txt', 3], ['wordlist.dat', 2]]) {
+      const r = await DC.parseFile(FX(f), f); assert.strictEqual(r.format, 'tsv', f); assert.strictEqual(r.entries.length, n, f);
+    }
+    const c = await DC.parseFile(FX('cp1251.txt'), 'cp1251.txt'); assert.strictEqual(c.entries[2].d, 'вода');
+    const u = await DC.parseFile(FX('utf16.tsv'), 'utf16.tsv'); assert.strictEqual(u.entries[0].t, '/ˈæp.əl/');
   });
 
   await ok('shortGloss(): joins lines, strips bullets, limits length', async () => {

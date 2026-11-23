@@ -18,6 +18,7 @@ const Reader = (() => {
   const cb = {}; // select / clear / blank callbacks
 
   const setLongPressDuration = ms => { lpMs = Math.max(200, Math.min(2000, Number(ms) || 500)); };
+  const EDGE = 72;   // px: a tap this close to the top / bottom of the screen belongs to the toolbars, not to the text
   const setReadingMode = m => { mode = m === 'page' ? 'page' : 'scroll'; };
 
   // ===================== Vocabulary marks =====================
@@ -230,11 +231,14 @@ const Reader = (() => {
   // ===================== Unified pointer gestures =====================
   /**
    * Attaches the gesture state machine to `root` (main document element or an EPUB iframe body).
-   * o.signal: AbortSignal for cleanup · o.onSwipe(dir): optional horizontal swipe (paged EPUB).
+   * o.signal: AbortSignal for cleanup · o.onSwipe(dir): optional horizontal swipe (paged EPUB) ·
+   * o.scroller(): scroll element panned when the page is dragged with the LEFT MOUSE BUTTON held down
+   * (touch panning is native). A word is selected with a double click / long press (hold still, then drag to extend).
    */
   function attach(root, o = {}) {
     const doc = root.ownerDocument, opt = { signal: o.signal };
-    let g = null, taps = 0, lastT = 0, lx = 0, ly = 0, raf = 0;
+    const framePos = () => { const fe = doc.defaultView && doc.defaultView.frameElement; return fe ? fe.getBoundingClientRect() : { left: 0, top: 0 }; };
+    let g = null, taps = 0, lastT = 0, lx = 0, ly = 0, raf = 0, blankT = 0;
     root.style.touchAction = o.onSwipe ? 'pan-y' : 'pan-x pan-y'; // scroll yes; browser pinch / double-tap zoom no (book zoom is handled by attachPinch)
 
     const end = () => { if (g) { clearTimeout(g.timer); g = null; } };
@@ -261,8 +265,9 @@ const Reader = (() => {
 
     root.addEventListener('pointerdown', e => {
       if (!e.isPrimary || e.button > 0) return;
-      end();
-      const G = g = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), type: e.pointerType, free: false, moved: false };
+      end(); clearTimeout(blankT);                       // a new touch cancels a pending single-tap action
+      const sc = o.scroller && o.scroller();
+      const G = g = { id: e.pointerId, x: e.clientX, y: e.clientY, t: Date.now(), type: e.pointerType, free: false, moved: false, sl: sc ? sc.scrollLeft : 0, st: sc ? sc.scrollTop : 0 };
       clearTimeout(timer); // pending popup of a previous tap
       G.timer = setTimeout(() => begin(G), lpMs);
     }, opt);
@@ -271,13 +276,21 @@ const Reader = (() => {
       if (!g || e.pointerId !== g.id) return;
       if (g.free) { extend(e.clientX, e.clientY); return; }
       const d = Math.hypot(e.clientX - g.x, e.clientY - g.y);
-      if (g.type === 'mouse' && e.buttons === 1 && d > 4) { clearTimeout(g.timer); begin(g); if (g.free) extend(e.clientX, e.clientY); else g.moved = true; }
-      else if (d > 10) { clearTimeout(g.timer); g.moved = true; } // touch/pen: user is scrolling or swiping
+      if (g.type === 'mouse') {
+        if (e.buttons !== 1 || d <= 4) return;
+        clearTimeout(g.timer); g.moved = true;
+        const sc = o.scroller && o.scroller();
+        if (sc) { // left button held + drag = pan the page, exactly like a finger
+          sc.scrollTop = g.st - (e.clientY - g.y);
+          if (!Display.get().bookLocked) sc.scrollLeft = g.sl - (e.clientX - g.x);
+          root.style.cursor = 'grabbing';
+        }
+      } else if (d > 10) { clearTimeout(g.timer); g.moved = true; } // touch/pen: user is scrolling or swiping
     }, opt);
 
     root.addEventListener('pointerup', e => {
       if (!g || e.pointerId !== g.id) return;
-      const G = g; end();
+      const G = g; end(); root.style.cursor = '';
       if (G.free) { emitSoon(0); return; }             // long-press / drag selection already painted
 
       const dx = e.clientX - G.x, dy = e.clientY - G.y;
@@ -291,10 +304,19 @@ const Reader = (() => {
       taps = isDouble ? taps + 1 : 1;
       lastT = now; lx = e.clientX; ly = e.clientY;
 
-      // Single tap: dismiss selection / toggle toolbar, no popup.
+      // Single tap on a word that is already known (looked up or saved) opens the action menu at once.
+      // Any other single tap dismisses the selection and is reported as a "blank tap" with its screen position
+      // (the app uses it to show / hide the toolbars).
       if (taps < 2) {
+        const known = e.target && e.target.closest ? e.target.closest('.rt-mark') : null;
+        const fp = framePos(), py = e.clientY + fp.top, atEdge = py <= EDGE || py >= innerHeight - EDGE;
+        if (known && !atEdge) {
+          const r = pick(doc, e.clientX, e.clientY, 'word');
+          if (r) { paint(r); emitSoon(0); return; }
+        }
         if (sel) clearSel();
-        if (cb.blank) cb.blank();
+        // Reported after the double-tap window, so the 2nd tap of a double-tap near an edge never hits a freshly shown toolbar.
+        if (cb.blank) { const f = framePos(), pt = { x: e.clientX + f.left, y: e.clientY + f.top }; blankT = setTimeout(() => { if (cb.blank) cb.blank(pt); }, 300); }
         return;
       }
 
@@ -308,7 +330,7 @@ const Reader = (() => {
 
     root.addEventListener('pointercancel', e => {
       if (!g || e.pointerId !== g.id) return;
-      const free = g.free; end();
+      const free = g.free; end(); root.style.cursor = '';
       if (free) emitSoon(0);
     }, opt);
   }
@@ -392,15 +414,17 @@ const Reader = (() => {
       } catch (e) { if (el._gen === gen) el._on = false; if (!e || e.name !== 'RenderingCancelledException') throw e; }
     };
 
-    const sync = () => { // current page + progress from scroll position
-      raf = 0; const bx = inner.children, top = wrap.scrollTop + wrap.clientHeight * 0.3; let i = 0;
+    const calc = () => { // current page + fraction of it under the 30 % line (exact position)
+      const bx = inner.children, top = wrap.scrollTop + wrap.clientHeight * 0.3; let i = 0;
       while (i < bx.length - 1 && bx[i].offsetTop + bx[i].offsetHeight + 12 <= top) i++;
       const b = bx[i], fr = Math.min(1, Math.max(0, (top - b.offsetTop) / (b.offsetHeight || 1)));
-      c.page = i + 1; c.frac = fr;
-      if (prog) prog({ percentage: Math.min(1, (i + fr) / N), location: i + 1, frac: fr });
+      return { percentage: Math.min(1, (i + fr) / N), location: i + 1, frac: fr };
     };
+    const sync = () => { raf = 0; if (zooming) return; const p = calc(); c.page = p.location; c.frac = p.frac; if (prog) prog(p); };
+    c.snap = calc;
+    let zooming = false;
 
-    const build = async (at, frac) => { // (re)creates page boxes for the current width; also used on resize / zoom
+    const build = async (at, frac, fx) => { // (re)creates page boxes for the current width; also used on resize / zoom
       if (c.io) c.io.disconnect(); inner.replaceChildren();
       zoomBuilt = Display.get().bookZoom;
       W = wrap.clientWidth; cw = Math.max(200, Math.min(W - 8, 900)) * zoomBuilt;
@@ -417,14 +441,29 @@ const Reader = (() => {
       [...inner.children].forEach(el => c.io.observe(el));
       const box = inner.children[Math.min(N, Math.max(1, at)) - 1];
       wrap.scrollTop = Math.max(0, box.offsetTop + (frac || 0) * box.offsetHeight - wrap.clientHeight * 0.3);
+      if (fx != null) wrap.scrollLeft = Math.max(0, fx * wrap.scrollWidth - wrap.clientWidth / 2);   // keep the horizontal centre when zooming
+      inner.style.transform = ''; zooming = false;
       await draw(box); // first visible page: errors surface to the fallback UI
       sync();
     };
 
     wrap.addEventListener('scroll', () => { clearSel(); if (!raf) raf = requestAnimationFrame(sync); }, { passive: true, signal: c.ac.signal });
-    // Called (debounced) by the ResizeObserver on #bookStage and when the book zoom changes
-    c.relayout = () => { if (cur === c && (wrap.clientWidth !== W || Display.get().bookZoom !== zoomBuilt)) { clearSel(); build(c.page, c.frac).catch(console.warn); } };
-    attach(wrap, { signal: c.ac.signal });
+    // Called (debounced) by the ResizeObserver on #bookStage; also commits a zoom change
+    c.relayout = () => { if (cur === c && (wrap.clientWidth !== W || Display.get().bookZoom !== zoomBuilt)) c.commit(); };
+    // Smooth zoom: while pinching / dragging the slider the already-rendered pages are only scaled with a GPU transform
+    // (real time, no re-render); when the gesture ends the pages are rendered again at the final size (sharp text).
+    c.preview = z => {
+      if (!zooming) { zooming = true; const p = calc(); c.page = p.location; c.frac = p.frac; }
+      inner.style.willChange = 'transform';
+      inner.style.transformOrigin = (wrap.scrollLeft + wrap.clientWidth / 2) + 'px ' + (wrap.scrollTop + wrap.clientHeight / 2) + 'px';
+      inner.style.transform = 'scale(' + (z / zoomBuilt) + ')';
+    };
+    c.commit = () => {
+      if (cur !== c) return;
+      const fx = inner.scrollWidth ? (wrap.scrollLeft + wrap.clientWidth / 2) / inner.scrollWidth : 0.5;
+      clearSel(); build(c.page, c.frac, fx).catch(console.warn);
+    };
+    attach(wrap, { signal: c.ac.signal, scroller: () => wrap });
     attachPinch(wrap, c.ac.signal);
     await build(c.page, c.frac);
     return N;
@@ -466,12 +505,34 @@ const Reader = (() => {
         'text-align': I(v('--text-align'))
       }
     });
+    const eWrap = $('epubWrap');
+    c.epubZoom = Display.get().bookZoom;
     c.applyEpubFont = () => { // book zoom = font scaling of the book only (the app UI is never touched)
-      const px = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-size')) || 18;
-      try { rend.themes.override('font-size', Math.round(px * Display.get().bookZoom * 10) / 10 + 'px', true); } catch (e) {}
+      const px = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--font-size')) || 18, z = Display.get().bookZoom;
+      c.epubZoom = z; eWrap.style.transform = '';
+      try { rend.themes.override('font-size', Math.round(px * z * 10) / 10 + 'px', true); } catch (e) {}
     };
     c.applyEpubFont();
     c.relayout = () => { try { rend.resize(); } catch (e) {} };
+    // Smooth zoom: scale the rendered book with a transform while pinching, re-flow once at the end
+    c.preview = z => { eWrap.style.willChange = 'transform'; eWrap.style.transformOrigin = '50% 50%'; eWrap.style.transform = 'scale(' + (z / c.epubZoom) + ')'; };
+    c.commit = () => { c.applyEpubFont(); eWrap.style.willChange = ''; };
+    /** Character-level CFI of the text at the top of the viewport (scrolled flow); more exact than the paragraph-level start CFI. */
+    c.exactCfi = () => {
+      if (paged) return null;
+      try {
+        const cr = rend.manager.container.getBoundingClientRect();
+        for (const ct of rend.getContents()) {
+          const fe = ct.document.defaultView.frameElement; if (!fe) continue;
+          const fr = fe.getBoundingClientRect(), y = cr.top - fr.top + 6;
+          if (y < 0 || y > fr.height) continue;
+          const rg = ct.document.caretRangeFromPoint ? ct.document.caretRangeFromPoint(12, y) : null;
+          if (rg && rg.startContainer && rg.startContainer.nodeType === 3) return ct.cfiFromRange(rg);
+        }
+      } catch (e) {}
+      return null;
+    };
+    c.snap = () => { const l = rend.currentLocation && rend.currentLocation(); const s = l && l.start; const cfi = c.exactCfi() || (s && s.cfi); return cfi ? { cfi } : null; };
 
     rend.hooks.content.register(ct => {
       const d = ct.document, st = d.createElement('style');
@@ -480,7 +541,7 @@ const Reader = (() => {
       d.head.appendChild(st);
       d.documentElement.style.touchAction = paged ? 'pan-y' : 'pan-x pan-y';
       applyMarks(d.body);
-      attach(d.body, { signal: c.ac.signal, onSwipe: paged ? s => (s > 0 ? rend.next() : rend.prev()) : null });
+      attach(d.body, { signal: c.ac.signal, onSwipe: paged ? s => (s > 0 ? rend.next() : rend.prev()) : null, scroller: () => (paged ? null : rend.manager.container) });
       attachPinch(d.body, c.ac.signal);
       if (paged) d.addEventListener('keydown', key);
       d.addEventListener('scroll', clearSel, { passive: true });
@@ -489,7 +550,7 @@ const Reader = (() => {
     rend.on('relocated', l => {
       const s = l.start; if (!s) return; clearSel();
       const pc = book.locations && book.locations.length() ? book.locations.percentageFromCfi(s.cfi) : s.percentage || 0;
-      if (prog) prog({ percentage: pc, cfi: s.cfi });
+      if (prog) prog({ percentage: pc, cfi: c.exactCfi() || s.cfi });
     });
 
     // Display the saved position. If the stored CFI fails, fall back to the start.
@@ -508,7 +569,7 @@ const Reader = (() => {
     return new TextDecoder('windows-1251').decode(u);
   }
 
-  async function openText(buf, fmt, pct, prog, c) {
+  async function openText(buf, fmt, saved, prog, c) {
     const wrap = $('textWrap'), box = document.createElement('div'), txt = decode(buf), add = (tag, s) => { s = s.replace(/\s+/g, ' ').trim(); if (s) { const p = document.createElement(tag); p.textContent = s; box.append(p); } };
     box.className = 'content';
     if (fmt === 'fb2') {
@@ -520,15 +581,40 @@ const Reader = (() => {
     if (!box.children.length) throw new Error('The file contains no readable text.');
     wrap.replaceChildren(box);
     applyMarks(box);
-    const sync = () => { const mx = wrap.scrollWidth - wrap.clientWidth, my = wrap.scrollHeight - wrap.clientHeight; if (prog) prog({ percentage: my >= mx ? (my > 0 ? wrap.scrollTop / my : 1) : wrap.scrollLeft / mx }); };
+    // Exact position = paragraph index + fraction of that paragraph above the top edge. Unlike a plain scroll
+    // percentage it survives zoom, font changes and rotation (the text re-flows, the anchor stays).
+    const items = box.children;
+    const anchorGet = () => {
+      let lo = 0, hi = items.length - 1; const top = wrap.scrollTop;
+      while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (items[mid].offsetTop <= top) lo = mid; else hi = mid - 1; }
+      const it = items[lo];
+      return { tp: lo, tf: it && it.offsetHeight ? Math.min(1, Math.max(0, (top - it.offsetTop) / it.offsetHeight)) : 0 };
+    };
+    const anchorSet = a => { const it = a && items[Math.min(items.length - 1, Math.max(0, a.tp))]; if (it) wrap.scrollTop = it.offsetTop + (a.tf || 0) * it.offsetHeight; };
+    const calc = () => {
+      const mx = wrap.scrollWidth - wrap.clientWidth, my = wrap.scrollHeight - wrap.clientHeight, vertical = my >= mx;
+      const p = { percentage: vertical ? (my > 0 ? wrap.scrollTop / my : 1) : (mx > 0 ? wrap.scrollLeft / mx : 0) };
+      if (vertical) Object.assign(p, anchorGet());
+      return p;
+    };
+    let last = null, zA = null, touched = false;
+    wrap.addEventListener('pointerdown', () => { touched = true; }, { passive: true, signal: c.ac.signal });
+    const sync = () => { if (zA) return; last = calc(); if (prog) prog(last); };
+    c.snap = calc;
     wrap.addEventListener('scroll', () => { clearSel(); sync(); }, { passive: true, signal: c.ac.signal });
-    attach(wrap, { signal: c.ac.signal });
+    attach(wrap, { signal: c.ac.signal, scroller: () => wrap });
     attachPinch(wrap, c.ac.signal);
-    requestAnimationFrame(() => { // restore the saved position along whichever axis scrolls
+    // zoom re-flows the text through a CSS variable (real time); the anchor keeps the same words under the top edge
+    c.preview = () => { if (!zA) zA = last || calc(); anchorSet(zA); };
+    c.commit = () => { anchorSet(zA || last); zA = null; sync(); };     // `last` = position before the re-flow, also for non-gesture zoom changes
+    c.relayout = () => { if (last && last.tp != null) anchorSet(last); };
+    const restore = () => { // saved position along whichever axis scrolls (paragraph anchor first, percentage as fallback)
       const mx = wrap.scrollWidth - wrap.clientWidth, my = wrap.scrollHeight - wrap.clientHeight;
-      if (pct) { if (my >= mx && my > 0) wrap.scrollTop = pct * my; else if (mx > 0) wrap.scrollLeft = pct * mx; }
+      if (saved && saved.tp != null && my >= mx) anchorSet(saved);
+      else if (saved && saved.percentage) { if (my >= mx && my > 0) wrap.scrollTop = saved.percentage * my; else if (mx > 0) wrap.scrollLeft = saved.percentage * mx; }
       sync();
-    });
+    };
+    requestAnimationFrame(() => { restore(); if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { if (cur === c && !touched) restore(); }); });
   }
 
   // ===================== Live style updates (settings changed while a book is open) =====================
@@ -547,14 +633,20 @@ const Reader = (() => {
 
   /** Display (zoom / position / lock) changed. Text & PDF follow CSS / the stage resize; EPUB needs its font size updated. */
   let zt = 0;
-  function applyDisplay(changed) {
-    if (!cur || !changed) return;
-    if (changed.bookZoom) {
-      if (cur.applyEpubFont) cur.applyEpubFont();
-      clearTimeout(zt); zt = setTimeout(() => { if (cur && cur.relayout) cur.relayout(); }, 120);   // PDF rebuild is debounced
+  function applyDisplay(changed, opts) {
+    if (!cur || !changed || !changed.bookZoom) return;
+    const c = cur;
+    if (opts && opts.live) {                       // pinch / slider drag: instant preview now, one sharp re-render when it settles
+      if (c.preview) c.preview(Display.get().bookZoom);
+      clearTimeout(zt); zt = setTimeout(() => { if (cur === c && c.commit) c.commit(); }, 350);
+    } else {                                       // gesture ended / button / reset: commit immediately
+      clearTimeout(zt); if (c.commit) c.commit();
     }
   }
-  if (typeof Display !== 'undefined') Display.onChange((s, changed) => applyDisplay(changed));
+  if (typeof Display !== 'undefined') Display.onChange((s, changed, opts) => applyDisplay(changed, opts));
+
+  /** Freshest reading position of the open book (exact scroll anchor / CFI). Used when the book is closed or the app is hidden. */
+  function snapshot() { try { return cur && cur.ready && cur.snap ? cur.snap() : null; } catch (e) { return null; } }
 
   // ===================== Public API =====================
   /**
@@ -582,7 +674,8 @@ const Reader = (() => {
     }
     if (book.format === 'pdf') await openPDF(buf, Number(pr.location) || 1, Number(pr.frac) || 0, onProgress, c);
     else if (book.format === 'epub') await openEPUB(buf, pr.cfi, onProgress, c);
-    else await openText(buf, book.format, pr.percentage, onProgress, c);
+    else await openText(buf, book.format, pr, onProgress, c);
+    c.ready = true;                                  // from now on snapshot() may be saved (never before the saved position is restored)
   }
 
   function close() {
@@ -653,9 +746,9 @@ const Reader = (() => {
 
   return {
     open, close, generateCoverForBook, setLongPressDuration, setReadingMode,
-    setMarks, refreshMarks, markKey, updateStyles, applyDisplay,
+    setMarks, refreshMarks, markKey, updateStyles, applyDisplay, snapshot,
     getLongPressDuration: () => lpMs,
     onSelection: f => { cb.select = f; }, onClear: f => { cb.clear = f; }, onBlankTap: f => { cb.blank = f; },
-    clearSelection: clearSel, hasSelection: () => !!sel
+    clearSelection: clearSel, hasSelection: () => !!sel, EDGE
   };
 })();
