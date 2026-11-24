@@ -102,4 +102,16 @@ tsv = "apple\t/ˈæp.əl/\tяблоко\nbread\t\tхлеб\n"
 open(os.path.join(OUT, 'utf16.tsv'), 'wb').write(b'\xff\xfe' + tsv.encode('utf-16le'))
 open(os.path.join(OUT, 'cp1251.txt'), 'wb').write(("apple\t\tяблоко\nbread\t\tхлеб\nwater\t\tвода\n").encode('cp1251'))
 open(os.path.join(OUT, 'wordlist.dat'), 'w', encoding='utf-8').write(tsv)
+# 4 columns: word, transcription, translation, sentence (the sentence itself may contain a tab)
+open(os.path.join(OUT, 'local4.tsv'), 'w', encoding='utf-8').write(
+    "apple\t/ˈæp.əl/\tяблоко\tI ate an apple.\n"
+    "bread\t\tхлеб\tFresh bread\tsmells good.\n"
+    "cat\tkæt\tкошка\t\n")
+# WikDict-like en->ru with explanations in English mixed into the article
+enru = build_stardict('en-ru', [
+    ('dog', [('h', '<ol><li>собака</li><li>пёс</li><li>a domesticated carnivorous mammal kept as a pet</li><li>domesticated mammal</li></ol>')]),
+    ('bank', [('h', '<ol><li>банк</li><li>берег</li><li>an institution that holds money</li></ol>')]),
+], seq='h', bookname='WikDict en-ru')
+with zipfile.ZipFile(os.path.join(OUT, 'wikdict-en-ru.zip'), 'w') as z:
+    for k, v in enru.items(): z.writestr(k, v)
 print('fixtures:', sorted(os.listdir(OUT)))

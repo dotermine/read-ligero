@@ -22,7 +22,8 @@ function run(msg) {
   post('read', 2);
   return msg.file.arrayBuffer().then(function (buf) {
     post('unpack', 8);
-    return DictCore.parseFile(new Uint8Array(buf), msg.file.name, function (f) { post('parse', 25 + f * 30); });
+    return DictCore.parseFile(new Uint8Array(buf), msg.file.name, function (f) { post('parse', 25 + f * 30); },
+      { src: lang, tgt: String(msg.native || '').toLowerCase() });   // keep only translations into the native language
   }).then(function (res) {
     meta = res;
     if (!res.entries.length) throw new Error('No dictionary entries were found in this file.');

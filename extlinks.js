@@ -13,18 +13,19 @@
 (function (root) {
   'use strict';
 
-  /** Builds an Android intent URL that opens `https` page `web` in app `pkg`, falling back to the browser. */
-  function androidApp(pkg, web) {
-    var m = /^https:\/\/([^\/?#]+)([^#]*)(#.*)?$/.exec(web);
-    // An intent URI cannot carry a #fragment, so only host + path + query go into the intent itself
-    // (the app opens; the full URL, fragment included, is kept in the browser fallback).
-    var rest = m ? m[2] : '';
-    // The fallback URL is itself a placeholder template; it is encoded after substitution (see build()).
-    return 'intent://' + (m ? m[1] : '') + rest + '#Intent;scheme=https;package=' + pkg +
-      ';S.browser_fallback_url={@web};end';
+  /**
+   * Android: the text is handed to the app with ACTION_SEND (the same mechanism as "Share → Translate"), which pre-fills the
+   * input of Google Translate, Yandex Translate, DeepL, … Link-based deep links (https://translate.google.com/?text=…) are
+   * intercepted by the app and open it EMPTY. If the app is not installed Chrome opens the web fallback instead.
+   * The language pair is the one set inside the app (ACTION_SEND cannot carry it).
+   */
+  function androidSend(pkg) {
+    return 'intent:#Intent;action=android.intent.action.SEND;type=text/plain;package=' + pkg +
+      ';S.android.intent.extra.TEXT={text};S.browser_fallback_url={@web};end';
   }
 
-  var G = 'https://translate.google.com/?sl={from}&tl={to}&text={text}&op=translate';
+  // The /m (mobile web) page reads ?q= reliably and is not claimed by the Android app, so the word is always pre-filled.
+  var G = 'https://translate.google.com/m?sl={from}&tl={to}&hl={to}&q={text}';
   var Y = 'https://translate.yandex.com/?source_lang={from}&target_lang={to}&text={text}';
   var D = 'https://www.deepl.com/translator#{from}/{to}/{text}';
   var R = 'https://context.reverso.net/translation/{fromName}-{toName}/{text}';
@@ -32,11 +33,11 @@
 
   var TRANSLATORS = [
     // --- native apps (Android intent with web fallback; elsewhere the web page / universal link) ---
-    { id: 'yandex-app',   group: 'app', label: 'Yandex Translate',     urls: { android: androidApp('ru.yandex.translate', Y), web: Y }, web: Y },
-    { id: 'google-app',   group: 'app', label: 'Google Translate',     urls: { android: androidApp('com.google.android.apps.translate', G), web: G }, web: G },
-    { id: 'deepl-app',    group: 'app', label: 'DeepL',                urls: { android: androidApp('com.deepl.mobiletranslator', D), web: D }, web: D },
-    { id: 'reverso-app',  group: 'app', label: 'Reverso Context',      urls: { android: androidApp('com.softissimo.reverso.context', R), web: R }, web: R },
-    { id: 'microsoft-app', group: 'app', label: 'Microsoft Translator', urls: { android: androidApp('com.microsoft.translator', M), web: M }, web: M },
+    { id: 'yandex-app',   group: 'app', label: 'Yandex Translate',     urls: { android: androidSend('ru.yandex.translate'), web: Y }, web: Y },
+    { id: 'google-app',   group: 'app', label: 'Google Translate',     urls: { android: androidSend('com.google.android.apps.translate'), web: G }, web: G },
+    { id: 'deepl-app',    group: 'app', label: 'DeepL',                urls: { android: androidSend('com.deepl.mobiletranslator'), web: D }, web: D },
+    { id: 'reverso-app',  group: 'app', label: 'Reverso Context',      urls: { android: androidSend('com.softissimo.reverso.context'), web: R }, web: R },
+    { id: 'microsoft-app', group: 'app', label: 'Microsoft Translator', urls: { android: androidSend('com.microsoft.translator'), web: M }, web: M },
     // --- web services ---
     { id: 'yandex-web',   group: 'web', label: 'Yandex Translate',     urls: { web: Y } },
     { id: 'google-web',   group: 'web', label: 'Google Translate',     urls: { web: G } },

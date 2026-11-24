@@ -1,6 +1,6 @@
 /* global db, saveBook, listBooks, deleteBook, getBook, getBookFile, getProgress, saveProgress,
    addBookmark, getSetting, setSetting, enforcePersistentStorage, saveBookCover, setBookFavorite,
-   Reader, Quiz, I18N, UI, Display, Backup, ExtLinks, DictCore,
+   Reader, Quiz, I18N, UI, Display, Backup, ExtLinks, DictCore, Bookmarks,
    addWord, listWords, listWordsForBook, deleteWord, updateWordSrs, addLookup, listLookups,
    listLanguages, getLanguage, addLanguage, updateLanguage, deleteLanguage, getDictionaryMeta,
    lookupWord, lookupEntries, storageEstimate */
@@ -11,6 +11,7 @@
   // Flashcard fields: id, word property, CSS class, i18n label key
   var FIELDS = [
     { id: 'word',       key: 'foreign',             cls: 'fc-word',    label: 'fieldWord' },
+    { id: 'transcr',    key: 'transcription',       cls: 'fc-ipa',     label: 'fieldTranscription' },
     { id: 'wordTr',     key: 'translation',         cls: 'fc-tr',      label: 'fieldWordTr' },
     { id: 'sentence',   key: 'context',             cls: 'fc-sent',    label: 'fieldSentence' },
     { id: 'sentenceTr', key: 'sentenceTranslation', cls: 'fc-sent-tr', label: 'fieldSentenceTr' }
@@ -131,6 +132,7 @@
     bindSettingsEvents();
     bindDisplaySettings();
     bindBackup();
+    CustomSelect.enhanceAll();                 // themed dropdowns instead of the platform pickers
     bindLifecycle();
     Display.bind();
 
@@ -246,6 +248,7 @@
       if (document.visibilityState === 'hidden') flushProgress();
     });
     window.addEventListener('pagehide', flushProgress);
+    document.addEventListener('freeze', flushProgress);        // Chrome freezes a backgrounded page without any further event
   }
 
   /** Writes the latest reading position to IndexedDB immediately (cancels the debounce timer). */
@@ -305,7 +308,7 @@
       b.classList.toggle('active', b.getAttribute('data-tab') === name);
     });
     document.body.setAttribute('data-active-tab', name);
-    if (name === 'read' && state.openBookId) Display.enterReader(); else Display.leaveReader();
+    if (name === 'read' && state.openBookId) Display.enterReader(false); else Display.leaveReader();
     updateImmersive();
     if (name !== 'read') { Reader.clearSelection(); closeDictSheet(); }
     if (name !== 'quiz') { var bm = $('bookMenu'); if (bm) bm.hidden = true; }
@@ -479,20 +482,13 @@
 
   // ===================== READER =====================
   function bindReader() {
-    var back = $('backBtn'), bm = $('bmBtn'), pop = $('selPopup');
+    var back = $('backBtn'), pop = $('selPopup');
 
     if (back) back.addEventListener('click', closeReader);
     var qb = $('qbarBtn'); if (qb) qb.addEventListener('click', function () { setQbar($('qbarPanel').hidden); });
     if ($('errBackBtn')) $('errBackBtn').addEventListener('click', closeReader);
     if ($('retryBtn')) $('retryBtn').addEventListener('click', function () { if (state.openBookId) openReader(state.openBookId); });
-    if (bm) bm.addEventListener('click', function () {
-      if (!state.openBookId) return;
-      var p = state.pendingProgress || { percentage: 0 };
-      addBookmark(state.openBookId, 'Bookmark @ ' + Math.round((p.percentage || 0) * 100) + '%',
-        p.percentage || 0, p.cfi || null)
-        .then(function () { UI.toast(I18N.t('bookmarkAdded'), 'success'); })
-        .catch(function (e) { UI.toast(e.message, 'error'); });
-    });
+    Bookmarks.init({ bookId: function () { return state.openBookId; }, pending: function () { return state.pendingProgress; } });
 
     /** Places the popup above the selection (flips below when there is no room) and clamps it inside the viewport. */
     function place(r) {
@@ -574,8 +570,13 @@
       return;
     }
     trackLookup(sel);
-    getLanguage(lang).then(function (l) {
-      var cfg = l && (kind === 'dict' ? (l.extDict || l.externalDict) : (l.extTrans || l.externalTranslator));
+    flushProgress();                                      // leaving the app for a translator: the reading position is saved first
+    Promise.all([getLanguage(lang), listLanguages()]).then(function (r) {
+      var cfgOf = function (l) { return l && (kind === 'dict' ? (l.extDict || l.externalDict) : (l.extTrans || l.externalTranslator)); };
+      var has = function (c) { return c && (typeof c === 'string' ? c : c.preset); };
+      var cfg = cfgOf(r[0]);
+      // the book's language has no app/service of its own: use the one chosen for any other language (source/target still come from the book)
+      if (!has(cfg)) { var other = r[1].filter(function (l) { return has(cfgOf(l)); })[0]; cfg = cfgOf(other); }
       var r = ExtLinks.build(kind === 'dict' ? 'dict' : 'translator', cfg, {
         word: sel.text, from: lang, to: to, nameOf: languageEnglishName
       });
@@ -611,7 +612,7 @@
       var sh = state.sheet; if (!sh) return;
       closeDictSheet();
       // the "New word" form opens with the translation already filled in from the dictionary entry
-      openWordModal(sh.text, sh.context, state.openBookId, { translation: sh.gloss || '-' });
+      openWordModal(sh.text, sh.context, state.openBookId, { translation: sh.gloss || '', transcription: sh.ipa || '', example: sh.example || '' });
     });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !sheet.hidden) closeDictSheet(); });
     // swipe the grab handle / header down to dismiss
@@ -642,7 +643,7 @@
     $('dsBody').textContent = '…';
     $('dictSheet').hidden = false;
     var panel = $('dsPanel'); panel.style.transform = '';
-    Promise.all([lookupEntries(lang, sel.text), getDictionaryMeta(lang)]).then(function (r) {
+    Promise.all([lookupEntries(lang, sel.text, nativeCode()), getDictionaryMeta(lang)]).then(function (r) {
       if (!state.sheet || state.sheet.token !== token) return;        // closed / replaced meanwhile
       var res = r[0], body = $('dsBody'); body.textContent = '';
       if (!res) {
@@ -650,9 +651,13 @@
         m.textContent = r[1] ? I18N.t('notFoundDict') : I18N.t('noDictionary');
         body.appendChild(m); return;
       }
-      state.sheet.gloss = DictCore.shortGloss(res.entries);
       var first = res.entries.filter(function (e) { return e[1]; })[0];
-      $('dsIpa').textContent = first ? first[1] : '';
+      var ex = res.entries.filter(function (e) { return e[3]; })[0];
+      // two separate pieces of data: the translation and the transcription (each goes into its own field of "New word")
+      state.sheet.gloss = DictCore.shortGloss(res.entries);
+      state.sheet.ipa = first ? first[1] : '';
+      state.sheet.example = ex ? ex[3] : '';
+      $('dsIpa').textContent = state.sheet.ipa;
       res.entries.forEach(function (e, i) {
         var blk = document.createElement('div'); blk.className = 'ds-entry';
         if (res.entries.length > 1 || DictCore.norm(e[0]).key !== DictCore.norm(sel.text).key) {
@@ -663,6 +668,7 @@
           if (!line.trim()) return;
           var d = document.createElement('div'); d.className = 'ds-def'; d.textContent = line; blk.appendChild(d);
         });
+        if (e[3]) { var xs = document.createElement('div'); xs.className = 'ds-example'; xs.textContent = e[3]; blk.appendChild(xs); }
         body.appendChild(blk);
       });
     }).catch(function (err) {
@@ -1226,7 +1232,7 @@
         else if (m.type === 'error') { cancelDictImport(); reject(new Error(m.message)); }
       };
       w.onerror = function (e) { cancelDictImport(); reject(new Error(e.message || 'Worker error')); };
-      w.postMessage({ type: 'import', file: file, lang: code });
+      w.postMessage({ type: 'import', file: file, lang: code, native: nativeCode() });
     });
   }
 
@@ -1299,11 +1305,12 @@
     saveBtn.addEventListener('click', function () {
       var foreign = (document.getElementById('wForeign').value || '').trim() || '-';
       var translation = (document.getElementById('wTranslation').value || '').trim() || '-';
+      var transcription = (document.getElementById('wTranscription').value || '').trim();
       var context = (document.getElementById('wContext').value || '').trim() || '-';
       var sentenceTranslation = (document.getElementById('wSentenceTranslation').value || '').trim() || '-';
       var bookId = state._wordModalBookId != null ? state._wordModalBookId : state.openBookId;
       addWord({
-        foreign: foreign, translation: translation,
+        foreign: foreign, translation: translation, transcription: transcription,
         context: context, sentenceTranslation: sentenceTranslation,
         langCode: state.currentLangCode || 'en',
         bookId: bookId
@@ -1325,15 +1332,22 @@
   function openWordModal(word, sentence, bookId, opts) {
     opts = opts || {};
     word = word || '-';
-    sentence = sentence || '-';
+    sentence = (sentence && sentence !== '-') ? sentence : (opts.example || '-');
     var lang = state.currentLangCode || 'en';
     state._wordModalBookId = bookId || null;
     var active = document.activeElement;
     if (active && active !== document.body && active.blur) active.blur();     // drop any focused input (keyboard)
-    var pre = opts.translation != null ? Promise.resolve(opts.translation) : lookupWord(lang, word).catch(function () { return null; });
-    pre.then(function (tr) {
+    // translation and transcription are separate: from the bottom sheet they arrive ready; otherwise ask the dictionary
+    var pre = opts.translation != null
+      ? Promise.resolve({ tr: opts.translation, ipa: opts.transcription || '' })
+      : lookupEntries(lang, word, nativeCode()).then(function (r) {
+          var ipa = r && r.entries.filter(function (e) { return e[1]; })[0];
+          return { tr: r ? DictCore.shortGloss(r.entries) : '', ipa: ipa ? ipa[1] : '' };
+        }).catch(function () { return { tr: '', ipa: '' }; });
+    pre.then(function (x) {
       document.getElementById('wForeign').value = word;
-      document.getElementById('wTranslation').value = tr || '-';
+      document.getElementById('wTranscription').value = x.ipa || '';
+      document.getElementById('wTranslation').value = x.tr || '-';
       document.getElementById('wContext').value = sentence;
       document.getElementById('wSentenceTranslation').value = '-';
       document.getElementById('wordModal').hidden = false;

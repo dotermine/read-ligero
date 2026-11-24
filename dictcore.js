@@ -101,19 +101,95 @@
     return lines.length > 0 && lines.filter(function (l) { return l.indexOf('\t') > 0; }).length >= Math.ceil(lines.length / 2);
   }
 
+  // ===================== Language pair filtering: keep ONLY translations =====================
+  // Bilingual dictionaries built from Wiktionary (WikDict, FreeDict …) often carry explanations written in the SOURCE
+  // language ("a domesticated mammal …") next to the real translations. They are told apart by script (en → ru: Latin
+  // text is an explanation, Cyrillic is the translation) and, for same-script pairs (en → de), by English function
+  // words and by tokens that are headwords of the dictionary itself.
+  var SCRIPT_OF_LANG = {
+    cyrillic: 'ru uk bg be sr mk kk ky mn tg', arabic: 'ar fa ur ps sd ug', hebrew: 'he yi', greek: 'el',
+    devanagari: 'hi mr ne sa', cjk: 'zh ja', hangul: 'ko', thai: 'th', bengali: 'bn', tamil: 'ta', telugu: 'te',
+    georgian: 'ka', armenian: 'hy'
+  };
+  var LANG_SCRIPT = {};
+  Object.keys(SCRIPT_OF_LANG).forEach(function (sc) { SCRIPT_OF_LANG[sc].split(' ').forEach(function (l) { LANG_SCRIPT[l] = sc; }); });
+  var SCRIPT_RE = {
+    latin: /\p{Script=Latin}/u, cyrillic: /\p{Script=Cyrillic}/u, arabic: /\p{Script=Arabic}/u, hebrew: /\p{Script=Hebrew}/u,
+    greek: /\p{Script=Greek}/u, devanagari: /\p{Script=Devanagari}/u, hangul: /\p{Script=Hangul}/u, thai: /\p{Script=Thai}/u,
+    bengali: /\p{Script=Bengali}/u, tamil: /\p{Script=Tamil}/u, telugu: /\p{Script=Telugu}/u, georgian: /\p{Script=Georgian}/u,
+    armenian: /\p{Script=Armenian}/u, cjk: /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u
+  };
+  var SCRIPT_NAMES = Object.keys(SCRIPT_RE);
+
+  /** Script family of a language code ('latin' unless known otherwise). */
+  function scriptOfLang(code) { return LANG_SCRIPT[String(code || '').toLowerCase().split('-')[0]] || 'latin'; }
+
+  /** Dominant script of the letters in `str` ('' when it has no letters). */
+  function dominantScript(str) {
+    var best = '', bestN = 0;
+    for (var i = 0; i < SCRIPT_NAMES.length; i++) {
+      var re = new RegExp(SCRIPT_RE[SCRIPT_NAMES[i]].source, 'gu'), m = String(str).match(re), n = m ? m.length : 0;
+      if (n > bestN) { bestN = n; best = SCRIPT_NAMES[i]; }
+    }
+    return best;
+  }
+
+  // English function words that do not occur in other languages' translations (no "a", "in", "on", "was", "has" …)
+  var EN_STOP = {};
+  ('the of that which is are with from who whose something someone usually used especially being having any other such also into ' +
+   'than then where when while each between within their its these those this it not but one can may will would often typically ' +
+   'generally someone\'s relating pertaining').split(' ').forEach(function (w) { EN_STOP[w] = 1; });
+
+  /**
+   * lines: one translation per entry (as stored). Returns only the lines that are translations into `tgt`.
+   * headSet (optional): Set of normalized single-token headwords of the dictionary (same-script pairs).
+   * Never returns an empty list for a non-empty input (falls back to the unfiltered lines).
+   */
+  function filterTranslations(lines, src, tgt, headSet) {
+    lines = (lines || []).filter(function (l) { return String(l).trim(); });
+    if (lines.length < 1) return lines;
+    var sS = scriptOfLang(src), tS = scriptOfLang(tgt), out = lines;
+    if (sS !== tS) {                                  // different scripts: drop everything written in the source script
+      var keep = lines.filter(function (l) { var d = dominantScript(l); return d !== sS; });
+      if (keep.length) return keep;
+    }
+    // same script (or nothing in the target script): English function words / headwords betray an explanation
+    var s2 = String(src || '').toLowerCase().split('-')[0];
+    var kept = lines.filter(function (l) {
+      var toks = norm(l).key.split(/[\s,;]+/).filter(Boolean);
+      if (toks.length < 2) return true;
+      if (s2 === 'en') for (var i = 0; i < toks.length; i++) if (EN_STOP[toks[i]]) return false;
+      if (headSet && toks.length >= 2 && toks.every(function (t) { return headSet.has(t); })) return false;
+      return true;
+    });
+    out = kept.length ? kept : lines;
+    return out;
+  }
+
+  /** Applies filterTranslations to looked-up entries ([headword, transcription, translations(\n-separated), sentence]). */
+  function filterEntries(entries, src, tgt) {
+    return (entries || []).map(function (e) {
+      var d = filterTranslations(String(e[2] || '').split('\n'), src, tgt).join('\n');
+      return [e[0], e[1], d, e[3] || ''];
+    });
+  }
+
   // ===================== TSV =====================
-  /** Word<TAB>Transcription<TAB>Translation. Two columns are tolerated (Word<TAB>Translation). */
+  /**
+   * Word<TAB>Transcription<TAB>Translation<TAB>Sentence — headerless. Columns 3 and 4 are optional; two columns are read as
+   * Word<TAB>Translation. Extra tabs inside the sentence are kept.
+   */
   function parseTsv(text) {
     var out = [], lines = String(text).replace(/^\uFEFF/, '').split(/\r?\n/);
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i];
       if (!line.trim()) continue;
       var c = line.split('\t');
-      var w = (c[0] || '').trim(), t = '', d = '';
-      if (c.length >= 3) { t = (c[1] || '').trim(); d = c.slice(2).join(' ').trim(); }
+      var w = (c[0] || '').trim(), t = '', d = '', sn = '';
+      if (c.length >= 3) { t = (c[1] || '').trim(); d = (c[2] || '').trim(); if (c.length >= 4) sn = c.slice(3).join(' ').trim(); }
       else if (c.length === 2) { d = (c[1] || '').trim(); }
       else continue;
-      if (w && (d || t)) out.push({ w: w, t: t, d: d });
+      if (w && (d || t)) { var e = { w: w, t: t, d: d }; if (sn) e.s = sn; out.push(e); }
     }
     return out;
   }
@@ -124,7 +200,7 @@
     if (ext === 'json') {
       var data; try { data = JSON.parse(text); } catch (e) { return out; }
       if (Array.isArray(data)) data.forEach(function (it) {
-        if (it && it.word && it.translation) out.push({ w: String(it.word), t: String(it.transcription || ''), d: String(it.translation) });
+        if (it && it.word && it.translation) out.push({ w: String(it.word), t: String(it.transcription || ''), d: String(it.translation), s: it.sentence ? String(it.sentence) : '' });
         else if (it && it.source && it.target) out.push({ w: String(it.source), t: '', d: String(it.target) });
       });
       else if (data && typeof data === 'object') Object.keys(data).forEach(function (k) { out.push({ w: k, t: '', d: String(data[k]) }); });
@@ -247,22 +323,29 @@
    * Returns [{ w, t, d, ref? }] — `ref` entries are synonyms: { w: synonym, ref: headword }.
    * onProgress(fraction 0..1) is optional.
    */
-  function parseStarDict(files, onProgress) {
+  function parseStarDict(files, onProgress, opts) {
+    opts = opts || {};
     var ifo = parseIfo(typeof files.ifo === 'string' ? files.ifo : decodeText(files.ifo));
     var seq = ifo.sametypesequence || '';
     var off64 = String(ifo.idxoffsetbits || '32') === '64';
     var idx = files.idx, dict = files.dict, dv = new DataView(idx.buffer, idx.byteOffset, idx.byteLength);
-    var out = [], heads = [], pos = 0, n = 0, total = Number(ifo.wordcount) || 0, step = off64 ? 12 : 8;
-    while (pos < idx.length) {
+    var out = [], heads = [], offs = [], sizes = [], pos = 0, n = 0, total = Number(ifo.wordcount) || 0, step = off64 ? 12 : 8;
+    while (pos < idx.length) {                         // pass 1: the index (headwords + where their articles are)
       var e = idx.indexOf(0, pos);
       if (e < 0 || e + 1 + step > idx.length) break;
-      var word = utf8(idx.subarray(pos, e));
-      var off = off64 ? be64(dv, e + 1) : be32(dv, e + 1);
-      var size = be32(dv, e + 1 + (off64 ? 8 : 4));
+      heads.push(utf8(idx.subarray(pos, e)));
+      offs.push(off64 ? be64(dv, e + 1) : be32(dv, e + 1));
+      sizes.push(be32(dv, e + 1 + (off64 ? 8 : 4)));
       pos = e + 1 + step;
-      heads.push(word);
+    }
+    // single-token headwords: an "explanation" consists of words that are themselves headwords (same-script pairs)
+    var headSet = new Set();
+    for (var h = 0; h < heads.length; h++) { var k = norm(heads[h]).key; if (k && k.indexOf(' ') < 0) headSet.add(k); }
+    for (var q = 0; q < heads.length; q++) {            // pass 2: the articles
+      var word = heads[q], off = offs[q], size = sizes[q];
       if (off + size <= dict.length && size > 0) {
         var ent = articleToEntry(dict.subarray(off, off + size), seq, word);
+        if (opts.src && opts.tgt && ent.d) ent.d = filterTranslations(ent.d.split('\n'), opts.src, opts.tgt, headSet).join('\n');
         if (word && (ent.d || ent.t)) out.push({ w: word, t: ent.t, d: ent.d });
       }
       if (onProgress && (++n & 4095) === 0 && total) onProgress(Math.min(1, n / total));
@@ -397,7 +480,7 @@
    * (e.g. renamed files), the unique .ifo/.idx/.dict files of the archive are used instead.
    * → { format: 'stardict', entries, name, wordcount } | { format: 'tsv', entries } — or throws a readable Error.
    */
-  function entriesFromFiles(list, onProgress) {
+  function entriesFromFiles(list, onProgress, opts) {
     list = list.filter(function (f) { return !isJunk(f.name); });
     var groups = {}, byKind = { ifo: [], idx: [], dict: [], syn: [] };
     list.forEach(function (f) {
@@ -416,7 +499,7 @@
       var entries = parseStarDict({
         ifo: best.ifo ? decodeText(best.ifo.data) : '', idx: maybeGunzip(best.idx), dict: maybeGunzip(best.dict),
         syn: best.syn ? maybeGunzip(best.syn) : null
-      }, onProgress);
+      }, onProgress, opts);
       return { format: 'stardict', entries: entries, name: info.bookname || (best.ifo ? baseName(best.ifo.name) : baseName(best.idx.name)), wordcount: Number(info.wordcount) || entries.length };
     }
     // no StarDict: a text word list inside the archive (any name; tsv first)
@@ -437,10 +520,10 @@
   }
 
   /** Whole pipeline for one picked file (bytes + name). The file name only matters as a hint for plain text files. */
-  function parseFile(u8, fileName, onProgress) {
+  function parseFile(u8, fileName, onProgress, opts) {
     var name = String(fileName || 'dictionary');
     if (magic(u8) === 'plain') return Promise.resolve(textDictionary(u8, name));
-    return unpack(u8, name).then(function (list) { return entriesFromFiles(list, onProgress); });
+    return unpack(u8, name).then(function (list) { return entriesFromFiles(list, onProgress, opts); });
   }
 
   // ===================== Rows =====================
@@ -457,7 +540,9 @@
       if (!row) { row = { lang: lang, key: n.key, fold: n.fold, e: [] }; map.set(n.key, row); }
       if (row.e.length < MAX_PER_KEY) {
         var d = String(en.d || '');
-        row.e.push([String(en.w).trim(), en.t || '', d.length > MAX_DEF ? d.slice(0, MAX_DEF) + '…' : d]);
+        var sn = String(en.s || '').slice(0, 400), rec = [String(en.w).trim(), en.t || '', d.length > MAX_DEF ? d.slice(0, MAX_DEF) + '…' : d];
+        if (sn) rec.push(sn);                              // 4th element only when the dictionary has an example sentence
+        row.e.push(rec);
       }
     }
     for (var j = 0; j < refs.length; j++) {
@@ -481,7 +566,8 @@
     setLibs: setLibs, norm: norm, candidates: candidates, stripMarkup: stripMarkup,
     parseTsv: parseTsv, parseLegacy: parseLegacy, parseStarDict: parseStarDict, parseIfo: parseIfo,
     untar: untar, unpack: unpack, parseFile: parseFile, entriesFromFiles: entriesFromFiles,
-    buildRows: buildRows, shortGloss: shortGloss, magic: magic, decodeText: decodeText, minimizeText: minimizeText
+    buildRows: buildRows, shortGloss: shortGloss, magic: magic, decodeText: decodeText, minimizeText: minimizeText,
+    filterTranslations: filterTranslations, filterEntries: filterEntries, scriptOfLang: scriptOfLang, dominantScript: dominantScript
   };
   root.DictCore = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

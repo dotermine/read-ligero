@@ -25,7 +25,8 @@ var Display = (function () {
 
   var S = Object.assign({}, DEFAULTS);
   var subs = [];
-  var active = false;            // true while the reader tab is showing (fullscreen / rotation only apply then)
+  var active = false;            // true while the reader tab is showing (the orientation lock only applies then)
+  var lastVisChange = 0;         // when the page last became hidden / visible (system fullscreen exits happen around it)
   var root = document.documentElement;
 
   var clamp = function (v, lo, hi) { return Math.min(hi, Math.max(lo, v)); };
@@ -67,16 +68,16 @@ var Display = (function () {
     try { return Promise.resolve(ex && ex.call(document)).catch(function () {}); } catch (e) { return Promise.resolve(); }
   }
 
-  function applyScreen() {
-    if (!active) { return exitFullscreen(); }
-    return S.screenMode === 'fullscreen' ? enterFullscreen() : exitFullscreen();
-  }
+  /** Fullscreen follows the user's choice everywhere (it is NOT left when switching tabs: every re-entry makes the
+   *  browser show its own "viewing full screen" banner). */
+  function applyScreen() { return S.screenMode === 'fullscreen' ? (fsElement() || root.classList.contains('pseudo-fs') ? Promise.resolve() : enterFullscreen()) : exitFullscreen(); }
 
   function onFsChange() {
-    // The user left fullscreen with a system gesture / Back: keep the UI state truthful
-    if (active && S.screenMode === 'fullscreen' && !fsElement() && !root.classList.contains('pseudo-fs')) {
-      set({ screenMode: 'windowed' }, { fromSystem: true });
-    }
+    if (fsElement() || S.screenMode !== 'fullscreen' || root.classList.contains('pseudo-fs')) return;
+    // Fullscreen ended. When that happens while the app goes to / returns from the background (external translator,
+    // app switcher) it is the system's doing: show the real state but do NOT overwrite the user's saved choice.
+    var system = document.visibilityState === 'hidden' || Date.now() - lastVisChange < 2000;
+    set({ screenMode: 'windowed' }, { fromSystem: system, transient: system });
   }
 
   // ===================== Orientation =====================
@@ -96,15 +97,15 @@ var Display = (function () {
   }
 
   /** Locks to the chosen angle: Screen Orientation API (entering fullscreen first when Chrome requires it), else CSS rotation. */
-  function applyOrientation() {
+  function applyOrientation(silent) {
     var o = S.orientation;
     if (!active || o === 'auto') { unlockOrientation(); return Promise.resolve('auto'); }
     cssRotate(0);
-    var fallback = function () { cssRotate(((o - currentAngle()) % 360 + 360) % 360); return 'css'; };
+    var fallback = function () { if (silent) return 'none'; cssRotate(((o - currentAngle()) % 360 + 360) % 360); return 'css'; };
     if (!(screen.orientation && screen.orientation.lock)) return Promise.resolve(fallback());
     var type = LOCK_TYPE[o];
     return screen.orientation.lock(type).then(function () { return 'api'; }).catch(function () {
-      if (!fsElement() && !root.classList.contains('pseudo-fs')) {
+      if (!silent && !fsElement() && !root.classList.contains('pseudo-fs')) {
         // Chrome only allows lock() in fullscreen (outside an installed standalone window)
         return enterFullscreen().then(function (m) {
           if (m !== 'native') return fallback();
@@ -141,11 +142,16 @@ var Display = (function () {
     var jobs = [];
     if (changed.screenMode) jobs.push(applyScreen());
     if (changed.orientation) jobs.push(applyOrientation());
-    if (!opts.live) KEYS.forEach(function (k) { if (changed[k] || (opts.persist && k in patch)) setSetting(k, S[k]).catch(function () {}); });
+    if (opts.transient) { /* system-initiated: show it, keep the saved preference */ }
+    else if (!opts.live) KEYS.forEach(function (k) { if (changed[k] || (opts.persist && k in patch)) setSetting(k, S[k]).catch(function () {}); });
+    else if (changed.bookZoom) persistZoomSoon();     // a process kill in the middle of a pinch must not lose the zoom
     emit(changed, opts);
     render();
     return Promise.all(jobs);
   }
+
+  var zoomTimer = 0;
+  function persistZoomSoon() { clearTimeout(zoomTimer); zoomTimer = setTimeout(function () { setSetting('bookZoom', S.bookZoom).catch(function () {}); }, 500); }
 
   /** Loads the saved values (call once at boot). */
   function load() {
@@ -155,9 +161,23 @@ var Display = (function () {
     });
   }
 
-  /** Reader opened / closed or its tab shown / hidden. Fullscreen + rotation only apply while reading. */
-  function enterReader() { active = true; applyCss(); return Promise.all([applyScreen(), applyOrientation()]); }
-  function leaveReader() { active = false; unlockOrientation(); return exitFullscreen(); }
+  /**
+   * The reader tab is shown. `fresh` = a book was just opened by a tap: only then fullscreen is (re-)entered if it is the
+   * saved choice and the system had left it; plain tab switches never touch fullscreen (no repeated banner).
+   */
+  function enterReader(fresh) {
+    active = true; applyCss();
+    return Promise.all([fresh ? applyScreen() : Promise.resolve(), applyOrientation()]);
+  }
+  /** The reader tab is hidden / closed: only the orientation lock is released. Fullscreen stays as the user left it. */
+  function leaveReader() { active = false; unlockOrientation(); return Promise.resolve(); }
+
+  /** Back from another app / the app switcher: re-assert what the system may have dropped (orientation lock, zoom, controls). */
+  function resume() {
+    lastVisChange = Date.now();
+    applyCss(); render();
+    if (active && S.orientation !== 'auto') applyOrientation(true);
+  }
 
   // ===================== Controls (reader bar + Settings tab) =====================
   function pct(k, v) { return Math.round(v * 100) + '%'; }
@@ -215,6 +235,9 @@ var Display = (function () {
         var key = t.getAttribute('data-disp-reset'), pp = {}; pp[key] = DEFAULTS[key]; set(pp, { persist: true });
       }
     });
+    document.addEventListener('visibilitychange', function () { lastVisChange = Date.now(); if (document.visibilityState === 'visible') resume(); });
+    window.addEventListener('pageshow', resume);
+    window.addEventListener('focus', function () { if (Date.now() - lastVisChange > 300) resume(); });
     document.addEventListener('fullscreenchange', onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
     render();
@@ -222,6 +245,6 @@ var Display = (function () {
 
   return {
     get: get, set: set, load: load, bind: bind, render: render, onChange: onChange,
-    enterReader: enterReader, leaveReader: leaveReader, DEFAULTS: DEFAULTS, LIMITS: LIMITS
+    enterReader: enterReader, leaveReader: leaveReader, resume: resume, DEFAULTS: DEFAULTS, LIMITS: LIMITS
   };
 })();

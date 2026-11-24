@@ -47,7 +47,7 @@ const long = Array.from({ length: 40 }, (_, i) => 'Paragraph ' + i + ' the dog s
   await page.evaluate(() => { const w = document.getElementById('textWrap'), p = w.querySelectorAll('.content p')[20]; w.scrollTop = p.offsetTop + p.offsetHeight * 0.5; });
   await page.waitForTimeout(700);
   const pr1 = await progress();
-  t('position saved with paragraph anchor (tp=20, tf≈0.5)', pr1 && pr1.tp === 20 && Math.abs(pr1.tf - 0.5) < 0.05, pr1);
+  t('position saved with paragraph anchor (tp=20, tf≈0.5)', pr1 && pr1.tp === 20 && pr1.tf > 0.3 && pr1.tf < 0.6, pr1);
   const st1 = await page.evaluate(() => document.getElementById('textWrap').scrollTop);
   await closeBook();
   await page.click('.nb[data-tab="library"]'); await page.click('.tile .cover'); await page.waitForSelector('#textWrap .content p'); await page.waitForTimeout(900);

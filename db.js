@@ -81,14 +81,20 @@ function deleteBook(id) {
 }
 
 function listBookmarks() { return db.bookmarks.orderBy('createdAt').reverse().toArray(); }
-function addBookmark(bookId, label, percentage, cfi) {
+/** pos = the reader position at that moment ({ location, frac } | { cfi } | { tp, tf } + percentage): enough to jump back exactly. */
+function addBookmark(bookId, label, percentage, cfi, pos) {
   var bid = Number(bookId);
   return db.books.get(bid).then(function (b) {
     return db.bookmarks.add({
       bookId: bid, bookTitle: b ? b.title : 'Unknown',
       label: label, percentage: percentage || 0,
-      cfi: cfi || null, createdAt: Date.now()
+      cfi: cfi || null, pos: pos || null, createdAt: Date.now()
     });
+  });
+}
+function listBookmarksForBook(bookId) {
+  return db.bookmarks.where('bookId').equals(Number(bookId)).toArray().then(function (a) {
+    return a.sort(function (x, y) { return (y.createdAt || 0) - (x.createdAt || 0); });
   });
 }
 function removeBookmark(id) { return db.bookmarks.delete(Number(id)); }
@@ -107,6 +113,7 @@ function addWord(data) {
     translation: String(data.translation || '').trim() || '-',
     context: String(data.context || '').trim() || '-',
     sentenceTranslation: String(data.sentenceTranslation || '').trim() || '-',
+    transcription: String(data.transcription || '').trim(),
     langCode: String(data.langCode || 'en').toLowerCase(),
     bookId: (data.bookId != null) ? Number(data.bookId) : null,
     createdAt: now,
@@ -184,15 +191,17 @@ function deleteDictionary(langCode) {
  * Order: exact normalized key → simple variants (possessive, hyphen/space, elision) → accent-insensitive index.
  * Every step is an index lookup (O(log n)); synonym rows (.syn) are followed once.
  */
-function lookupEntries(langCode, word) {
+function lookupEntries(langCode, word, target) {
   var lang = String(langCode || '').toLowerCase();
   var cands = DictCore.candidates(word);
   if (!cands[0]) return Promise.resolve(null);
 
+  // `target` (native language): only translations into it are returned (explanations in the source language are dropped)
+  var pack = function (r) { return { key: r.key, entries: target ? DictCore.filterEntries(r.e, lang, target) : r.e }; };
   function resolve(row) {
     if (!row) return null;
-    if (row.e) return { key: row.key, entries: row.e };
-    if (row.ref) return db.dictEntries.get([lang, row.ref]).then(function (r) { return r && r.e ? { key: r.key, entries: r.e } : null; });
+    if (row.e) return pack(row);
+    if (row.ref) return db.dictEntries.get([lang, row.ref]).then(function (r) { return r && r.e ? pack(r) : null; });
     return null;
   }
   function byKey(i) {
@@ -208,6 +217,6 @@ function lookupEntries(langCode, word) {
 }
 
 /** Short gloss (string) for pre-filling forms, or null when the word is unknown. */
-function lookupWord(langCode, word) {
-  return lookupEntries(langCode, word).then(function (r) { return r ? (DictCore.shortGloss(r.entries) || null) : null; });
+function lookupWord(langCode, word, target) {
+  return lookupEntries(langCode, word, target).then(function (r) { return r ? (DictCore.shortGloss(r.entries) || null) : null; });
 }

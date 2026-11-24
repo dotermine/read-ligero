@@ -96,7 +96,10 @@
         <button class="tbtn" id="qbarBtn" aria-label="Display settings" aria-expanded="false" aria-controls="qbarPanel" title="Display settings">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
         </button>
-        <button class="tbtn" id="bmBtn" title="Bookmark">
+        <button class="tbtn" id="bmListBtn" aria-label="Bookmarks list" title="Bookmarks list">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/></svg>
+        </button>
+        <button class="tbtn" id="bmBtn" aria-label="Add bookmark" title="Add bookmark">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         </button>
       </div>
@@ -132,10 +135,10 @@
           </button>
           <span class="qsep" aria-hidden="true"></span>
           <div class="qgroup" role="group" aria-label="Screen orientation">
-            <button type="button" class="qbtn" data-disp-orient="0" aria-pressed="false" aria-label="Portrait, clockwise (0°)" title="Portrait, clockwise (0°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="10" y1="5" x2="14" y2="5"/></svg></button>
-            <button type="button" class="qbtn" data-disp-orient="180" aria-pressed="false" aria-label="Portrait, counter-clockwise (180°)" title="Portrait, counter-clockwise (180°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="10" y1="19" x2="14" y2="19"/></svg></button>
-            <button type="button" class="qbtn" data-disp-orient="90" aria-pressed="false" aria-label="Landscape, clockwise (90°)" title="Landscape, clockwise (90°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="5" y1="10" x2="5" y2="14"/></svg></button>
-            <button type="button" class="qbtn" data-disp-orient="270" aria-pressed="false" aria-label="Landscape, counter-clockwise (270°)" title="Landscape, counter-clockwise (270°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="19" y1="10" x2="19" y2="14"/></svg></button>
+            <button type="button" class="qbtn" data-disp-orient="0" aria-pressed="false" aria-label="Portrait (0°)" title="Portrait (0°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(0 12 12)"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="5" r="0.9" fill="currentColor" stroke="none"/><line x1="10" y1="19" x2="14" y2="19" stroke-width="2.6"/></g></svg></button>
+            <button type="button" class="qbtn" data-disp-orient="180" aria-pressed="false" aria-label="Portrait, upside down (180°)" title="Portrait, upside down (180°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(180 12 12)"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="5" r="0.9" fill="currentColor" stroke="none"/><line x1="10" y1="19" x2="14" y2="19" stroke-width="2.6"/></g></svg></button>
+            <button type="button" class="qbtn" data-disp-orient="90" aria-pressed="false" aria-label="Landscape, device turned left (90°)" title="Landscape, device turned left (90°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(-90 12 12)"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="5" r="0.9" fill="currentColor" stroke="none"/><line x1="10" y1="19" x2="14" y2="19" stroke-width="2.6"/></g></svg></button>
+            <button type="button" class="qbtn" data-disp-orient="270" aria-pressed="false" aria-label="Landscape, device turned right (270°)" title="Landscape, device turned right (270°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(90 12 12)"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="5" r="0.9" fill="currentColor" stroke="none"/><line x1="10" y1="19" x2="14" y2="19" stroke-width="2.6"/></g></svg></button>
           </div>
           <span class="qsep" aria-hidden="true"></span>
           <button type="button" class="qbtn qlock" data-disp-lock aria-pressed="false" aria-label="Lock view (freeze zoom and position)" title="Lock view">
@@ -354,7 +357,7 @@
       <div class="set-row set-col"><span data-i18n="orientation">Screen orientation</span>
         <div class="chips">
           <button type="button" class="chip" data-disp-orient="auto" aria-pressed="false" data-i18n="orientAuto">Auto</button>
-          <button type="button" class="chip chip-ico" data-disp-orient="0" aria-pressed="false" aria-label="Portrait, clockwise (0°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="10" y1="5" x2="14" y2="5"/></svg></button><button type="button" class="chip chip-ico" data-disp-orient="180" aria-pressed="false" aria-label="Portrait, counter-clockwise (180°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="10" y1="19" x2="14" y2="19"/></svg></button><button type="button" class="chip chip-ico" data-disp-orient="90" aria-pressed="false" aria-label="Landscape, clockwise (90°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="5" y1="10" x2="5" y2="14"/></svg></button><button type="button" class="chip chip-ico" data-disp-orient="270" aria-pressed="false" aria-label="Landscape, counter-clockwise (270°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="10" rx="2"/><line x1="19" y1="10" x2="19" y2="14"/></svg></button>
+          <button type="button" class="chip chip-ico" data-disp-orient="0" aria-pressed="false" aria-label="Portrait (0°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(0 12 12)"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="5" r="0.9" fill="currentColor" stroke="none"/><line x1="10" y1="19" x2="14" y2="19" stroke-width="2.6"/></g></svg></button><button type="button" class="chip chip-ico" data-disp-orient="180" aria-pressed="false" aria-label="Portrait, upside down (180°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(180 12 12)"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="5" r="0.9" fill="currentColor" stroke="none"/><line x1="10" y1="19" x2="14" y2="19" stroke-width="2.6"/></g></svg></button><button type="button" class="chip chip-ico" data-disp-orient="90" aria-pressed="false" aria-label="Landscape, device turned left (90°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(-90 12 12)"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="5" r="0.9" fill="currentColor" stroke="none"/><line x1="10" y1="19" x2="14" y2="19" stroke-width="2.6"/></g></svg></button><button type="button" class="chip chip-ico" data-disp-orient="270" aria-pressed="false" aria-label="Landscape, device turned right (270°)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g transform="rotate(90 12 12)"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="5" r="0.9" fill="currentColor" stroke="none"/><line x1="10" y1="19" x2="14" y2="19" stroke-width="2.6"/></g></svg></button>
         </div></div>
       <div class="set-row"><span data-i18n="bookZoom">Book zoom</span>
         <div class="set-slider"><input type="range" data-disp="bookZoom" min="0.5" max="4" step="0.01" aria-label="Book zoom"><span class="qval" data-disp-val="bookZoom">100%</span><button type="button" class="chip" data-disp-reset="bookZoom" aria-label="Reset zoom">↺</button></div></div>
@@ -448,12 +451,27 @@
   </div>
 </div>
 
+<!-- ===================== BOOKMARKS LIST SHEET ===================== -->
+<div id="bmSheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="bmTitle">
+  <div class="sheet-backdrop" id="bmBackdrop"></div>
+  <div class="sheet-panel" tabindex="-1">
+    <div class="sheet-grab" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <div class="ds-title"><div id="bmTitle" class="ds-word" style="font-size:20px"><span data-i18n="bookmarks">Bookmarks</span> <span id="bmCount" class="muted"></span></div></div>
+      <button type="button" class="tbtn" id="bmClose" aria-label="Close"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div id="bmBody" class="ds-body"></div>
+  </div>
+</div>
+
 <!-- ===================== WORD MODAL ===================== -->
 <div id="wordModal" class="modal" hidden role="dialog" aria-modal="true" onclick="if(event.target===this) window.__closeWordModal()">
   <div class="modal-box" id="wordBox" tabindex="-1" onclick="event.stopPropagation()">
     <h3 style="margin:0 0 12px" data-i18n="newWord">New word</h3>
     <label class="lbl" data-i18n="wordField">Word</label>
     <input id="wForeign" class="inp" autocomplete="off">
+    <label class="lbl" for="wTranscription" data-i18n="fieldTranscription">Transcription</label>
+    <input id="wTranscription" class="inp" autocomplete="off" placeholder="[ˈeksəmpl]">
     <label class="lbl" data-i18n="translationField">Translation</label>
     <input id="wTranslation" class="inp" autocomplete="off" placeholder="-">
     <label class="lbl" data-i18n="contextField">Context (sentence)</label>
@@ -511,6 +529,7 @@
 <!-- application modules (order matters) -->
 <script src="i18n.js"></script>
 <script src="ui.js"></script>
+<script src="customselect.js"></script>
 <script src="dictcore.js"></script>
 <script src="dbschema.js"></script>
 <script src="quiz.js"></script>
@@ -518,6 +537,7 @@
 <script src="db.js"></script>
 <script src="backup.js"></script>
 <script src="display.js"></script>
+<script src="bookmarks.js"></script>
 <script src="reader.js"></script>
 <script src="app.js"></script>
 </body>

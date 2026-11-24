@@ -7,17 +7,19 @@ let n = 0; const ok = (name, fn) => { fn(); n++; console.log('  ✓', name); };
 console.log('extlinks.js');
 
 ok('web translators fill {text}/{from}/{to}/names', () => {
-  assert.strictEqual(X.build('translator', { preset: 'google-web' }, ctx()).url, 'https://translate.google.com/?sl=de&tl=ru&text=Stra%C3%9Fe%20caf%C3%A9&op=translate');
+  assert.strictEqual(X.build('translator', { preset: 'google-web' }, ctx()).url, 'https://translate.google.com/m?sl=de&tl=ru&hl=ru&q=Stra%C3%9Fe%20caf%C3%A9');   // /m + q= : the word is always pre-filled
   assert.strictEqual(X.build('translator', { preset: 'reverso-web' }, ctx()).url, 'https://context.reverso.net/translation/german-russian/Stra%C3%9Fe%20caf%C3%A9');
   assert.strictEqual(X.build('translator', { preset: 'deepl-web' }, ctx()).url, 'https://www.deepl.com/translator#de/ru/Stra%C3%9Fe%20caf%C3%A9');
 });
-ok('Android app preset = intent URL with an encoded browser fallback', () => {
+ok('Android app presets hand the TEXT to the app (ACTION_SEND, like Share → Translate) with a web fallback', () => {
   const u = X.build('translator', { preset: 'google-app' }, ctx({ platform: 'android' })).url;
-  assert.ok(u.startsWith('intent://translate.google.com/?sl=de&tl=ru&text=Stra%C3%9Fe%20caf%C3%A9&op=translate#Intent;scheme=https;package=com.google.android.apps.translate;'));
+  assert.ok(u.startsWith('intent:#Intent;action=android.intent.action.SEND;type=text/plain;package=com.google.android.apps.translate;S.android.intent.extra.TEXT=Stra%C3%9Fe%20caf%C3%A9;'), u);
   const fb = /S\.browser_fallback_url=([^;]+);end$/.exec(u)[1];
-  assert.strictEqual(decodeURIComponent(fb), 'https://translate.google.com/?sl=de&tl=ru&text=Stra%C3%9Fe%20caf%C3%A9&op=translate');
-  const d = X.build('translator', { preset: 'deepl-app' }, ctx({ platform: 'android' })).url;      // fragment must not leak into the intent data
-  assert.ok(d.startsWith('intent://www.deepl.com/translator#Intent;') && decodeURIComponent(/fallback_url=([^;]+)/.exec(d)[1]).endsWith('#de/ru/Stra%C3%9Fe%20caf%C3%A9'));
+  assert.strictEqual(decodeURIComponent(fb), 'https://translate.google.com/m?sl=de&tl=ru&hl=ru&q=Stra%C3%9Fe%20caf%C3%A9');
+  for (const [id, pkg] of [['yandex-app', 'ru.yandex.translate'], ['deepl-app', 'com.deepl.mobiletranslator'], ['reverso-app', 'com.softissimo.reverso.context'], ['microsoft-app', 'com.microsoft.translator']]) {
+    const v = X.build('translator', { preset: id }, ctx({ platform: 'android', word: 'dog' })).url;
+    assert.ok(v.includes('package=' + pkg) && v.includes('S.android.intent.extra.TEXT=dog;') && v.includes('S.browser_fallback_url=https%3A%2F%2F'), v);
+  }
 });
 ok('app presets fall back to the web URL on iOS / desktop', () => {
   assert.ok(X.build('translator', { preset: 'google-app' }, ctx({ platform: 'ios' })).url.startsWith('https://translate.google.com/'));

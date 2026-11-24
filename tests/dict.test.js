@@ -80,6 +80,44 @@ const rowsOf = async (file, lang = 'en') => { const r = await DC.parseFile(FX(fi
     const u = await DC.parseFile(FX('utf16.tsv'), 'utf16.tsv'); assert.strictEqual(u.entries[0].t, '/ˈæp.əl/');
   });
 
+  await ok('TSV with FOUR columns: word, transcription, translation, sentence', async () => {
+    const r = await DC.parseFile(FX('local4.tsv'), 'local4.tsv'); assert.strictEqual(r.format, 'tsv'); assert.strictEqual(r.entries.length, 3);
+    assert.deepStrictEqual(r.entries[0], { w: 'apple', t: '/ˈæp.əl/', d: 'яблоко', s: 'I ate an apple.' });
+    assert.strictEqual(r.entries[1].s, 'Fresh bread smells good.');                       // extra tab inside the sentence is kept
+    assert.strictEqual(r.entries[2].s, undefined);
+    const row = DC.buildRows('en', r.entries).find(x => x.key === 'apple');
+    assert.deepStrictEqual(row.e[0], ['apple', '/ˈæp.əl/', 'яблоко', 'I ate an apple.']);   // sentence stored as 4th element
+    const three = DC.buildRows('en', DC.parseTsv('a\tb\tc\n'))[0].e[0]; assert.strictEqual(three.length, 3);   // 3 columns still work
+  });
+
+  await ok('pair filter: en → ru keeps only Cyrillic translations, drops English explanations', () => {
+    const lines = ['собака', 'пёс', 'a domesticated carnivorous mammal kept as a pet', 'domesticated mammal'];
+    assert.deepStrictEqual(DC.filterTranslations(lines, 'en', 'ru'), ['собака', 'пёс']);
+    assert.deepStrictEqual(DC.filterTranslations(['dog', 'hound', 'собака'], 'ru', 'en'), ['dog', 'hound']);   // reversed pair: Cyrillic = explanation
+    assert.deepStrictEqual(DC.filterTranslations(['Hund', 'a mammal that is domesticated'], 'en', 'ru'), ['Hund']);      // no Cyrillic at all: stopword rule
+  });
+
+  await ok('pair filter: en → de (same script): English function words and dictionary headwords betray explanations', () => {
+    assert.deepStrictEqual(DC.filterTranslations(['Hund', 'Rüde', 'a domesticated mammal that is kept as a pet', 'carnivorous mammal'], 'en', 'de', new Set(['carnivorous', 'mammal', 'dog'])), ['Hund', 'Rüde']);
+    assert.deepStrictEqual(DC.filterTranslations(['Hand', 'Bank'], 'en', 'de', new Set(['hand', 'bank'])), ['Hand', 'Bank']);   // cognates (single tokens) stay
+    assert.deepStrictEqual(DC.filterTranslations(['the of that'], 'en', 'de'), ['the of that']);                                // never returns nothing
+    assert.strictEqual(DC.scriptOfLang('ru'), 'cyrillic'); assert.strictEqual(DC.scriptOfLang('de'), 'latin'); assert.strictEqual(DC.dominantScript('собака dog'), 'cyrillic');
+  });
+
+  await ok('import-time filter: WikDict en→ru stores only the Russian translations', async () => {
+    const r = await DC.parseFile(FX('wikdict-en-ru.zip'), 'x.zip', null, { src: 'en', tgt: 'ru' });
+    const map = new Map(DC.buildRows('en', r.entries).map(x => [x.key, x]));
+    assert.deepStrictEqual(map.get('dog').e[0][2].split('\n'), ['собака', 'пёс']);
+    assert.deepStrictEqual(map.get('bank').e[0][2].split('\n'), ['банк', 'берег']);
+    const raw = await DC.parseFile(FX('wikdict-en-ru.zip'), 'x.zip');                     // without a pair: nothing is filtered by script
+    assert.ok(raw.entries[0].d.split('\n').length > 2);
+  });
+
+  await ok('display-time filter works on stored entries (already imported dictionaries)', () => {
+    const e = DC.filterEntries([['dog', 'dɒɡ', 'собака\nan animal that barks and is kept as a pet\nпёс', 'Sentence']], 'en', 'ru');
+    assert.deepStrictEqual(e[0], ['dog', 'dɒɡ', 'собака\nпёс', 'Sentence']);
+  });
+
   await ok('shortGloss(): joins lines, strips bullets, limits length', async () => {
     const { map } = await rowsOf('wikdict-eng-deu.zip');
     assert.strictEqual(DC.shortGloss(map.get('dog').e), 'Hund; Rüde');

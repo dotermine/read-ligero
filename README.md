@@ -74,7 +74,7 @@ files first and import afterwards, to get reading progress back.
 npm test                       # portable unit tests (SRS engine, dictionary parsers, external-link builder)
 python3 tests/make-fixtures.py # (re)build StarDict/TSV fixtures
 # Browser end-to-end tests (Playwright + Chromium; edit the require() path at the top for your machine):
-python3 -m http.server 8765 &  node tests/e2e-smoke.js && node tests/e2e-features.js && node tests/e2e-round3.js && node tests/e2e-migration.js
+python3 -m http.server 8765 &  node tests/e2e-smoke.js && node tests/e2e-features.js && node tests/e2e-round3.js && node tests/e2e-round4.js && node tests/e2e-zoom.js && node tests/e2e-migration.js
 # offline on a host that redirects /index.html → / (Netlify / Cloudflare Pages style):
 node tests/redirect-server.js . 8780 &  node tests/e2e-offline.js http://localhost:8780/
 ```
@@ -130,3 +130,50 @@ hide (they also hide by themselves after 5 s). `qbarHandle` and `bookOffset` are
 finger or by holding the left mouse button. Zoom is continuous (1 % steps) and real-time: pinch/slider scale the rendered pages with a
 GPU transform, then the page is re-rendered sharply when the gesture ends. A single tap on a word that was already looked up or saved opens the action menu.
 The word popup and flashcards scroll when their content is long.
+
+
+## Round 4 — what changed and why
+
+**Zoom (Display settings, pinch).** The old code cleared the pages and re-rendered them after the gesture, which flashed white and
+shifted the picture. Now the pages on screen are only *scaled* (GPU transform around the screen centre) while you drag; when the gesture
+settles, the pages for the new size are rendered in a hidden layer and swapped in during a single frame, with the same point of the page
+still in the middle of the screen. Tested by sampling every animation frame during a slider drag: no blank frame, centre kept to <2 %.
+
+**Position.** Real bug: switching to another tab hides the reader (`display:none`), browsers reset the scroll offset of hidden
+elements, and the layout observer then re-laid out and *saved* that garbage (a PDF at 700 px came back at 260 px). Hidden tabs are now
+ignored (nothing is laid out or saved) and the last good position is restored when the tab is shown again. Also: positions are saved
+immediately before opening an external translator, on `visibilitychange`/`pagehide`/`freeze`; text anchors now include the paragraph
+margin (no 15 px drift); EPUB keeps its CFI fresh from the scroll position.
+
+**Fullscreen / orientation.** Fullscreen is no longer left and re-entered on every tab switch (each re-entry makes the browser show its
+own banner). A fullscreen exit that the *system* causes while the app is in the background no longer overwrites your saved choice, and
+on return the orientation lock and zoom are re-applied. Chrome's own "Viewing full screen" banner cannot be switched off by web code;
+it now appears only when fullscreen is really entered.
+
+**Orientation icons.** Each icon is one phone with a camera dot at the top and a home bar at the bottom, rotated: 0° = upright,
+180° = upside down, 90° = `landscape-primary` (device turned left, dot on the left), 270° = `landscape-secondary` (dot on the right).
+
+**Dropdowns.** Every `<select>` is replaced by a themed list (`customselect.js`); the real select stays hidden so values, events and
+saved settings are unchanged. Keyboard, type-ahead and a filter box (long lists, never auto-focused) are supported.
+
+**Bookmarks.** The top bar has a *list* button next to the *add* button. The list is a sheet for the current book (jump / delete);
+bookmarks store the exact position (`bookmarks.js`).
+
+**Languages.** The book language selects the dictionary (including imported offline ones) and the translator's source language. If that
+language has no external app/service configured, the one configured for another language is used.
+
+**Translators.** On Android the word is passed with `ACTION_SEND` (the mechanism behind *Share → Translate*), which pre-fills Google
+Translate, Yandex, DeepL, …; the language pair is the one set inside the app. Google web uses `/m?…&q=`. Link-style deep links were opened
+*empty* by the app.
+
+**Dictionaries.** Only translations into the *native language* are kept: text in the source script is dropped (en → ru: Latin = explanation),
+for same-script pairs English function words / dictionary headwords betray explanations. The filter runs at import **and** when a word is
+looked up, so dictionaries you imported earlier are cleaned without re-importing (set the native language correctly). TSV import now
+reads `word<TAB>transcription<TAB>translation<TAB>sentence` (columns 3–4 optional); the sentence is shown as an example in the sheet.
+
+**New word.** A *Transcription* field sits under *Word*. *Add to vocabulary* fills translation and transcription separately.
+Transcription can be shown on flashcards (Quiz → Card sides).
+
+**Refactor.** New modules `customselect.js` and `bookmarks.js`; PDF engine rewritten around a position model (page + fraction) instead of
+scattered scroll maths; dead code removed (`androidApp`, pseudo-fullscreen branches, fixed-step zoom rounding).
+`app.js` is still one large file — splitting it further needs a shared-state module and was not attempted in this round.

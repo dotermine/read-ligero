@@ -3,6 +3,8 @@ var I18N = (function () {
 
   var dict = {
     en: {
+      fieldTranscription: 'Transcription',
+      bmLabelPage: 'Page {0} · {1}%', bmLabelPct: '{0}%', bmEmpty: 'No bookmarks in this book yet. Tap the bookmark icon to add one.', bookmarks: 'Bookmarks',
       nativeLanguage: 'Native language', nativeHint: 'Translations (external translators and dictionaries) go into this language. Set the language of each book in the reader: display settings → Book language.',
       bookLanguage: 'Book language', sameLang: 'Source and target language are both {0}. Set this book’s language (reader → display settings → Book language) or your native language (Settings).',
       offlineStatus: 'Offline mode', offlineCheck: 'Check offline files', offlineReady: 'Ready ✓ ({0}/{1} files)', offlineMissing: 'Not ready: {0} files missing. Connect and tap “Check offline files”.',
@@ -76,6 +78,8 @@ var I18N = (function () {
       dictTitle: 'Book dictionary', sortAdded: 'Added', sortTitle: 'Title', sortName: 'Name', noLanguages: 'No languages yet.'
     },
     ru: {
+      fieldTranscription: 'Транскрипция',
+      bmLabelPage: 'Страница {0} · {1}%', bmLabelPct: '{0}%', bmEmpty: 'В этой книге пока нет закладок. Нажмите значок закладки, чтобы добавить.', bookmarks: 'Закладки',
       nativeLanguage: 'Родной язык', nativeHint: 'Переводы (внешние переводчики и словари) выполняются на этот язык. Язык каждой книги задаётся в читалке: настройки отображения → Язык книги.',
       bookLanguage: 'Язык книги', sameLang: 'Исходный и целевой язык совпадают ({0}). Укажите язык этой книги (читалка → настройки отображения → Язык книги) или родной язык (Настройки).',
       offlineStatus: 'Офлайн-режим', offlineCheck: 'Проверить офлайн-файлы', offlineReady: 'Готово ✓ ({0}/{1} файлов)', offlineMissing: 'Не готово: не хватает файлов — {0}. Подключитесь к сети и нажмите «Проверить офлайн-файлы».',

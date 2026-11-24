@@ -393,11 +393,14 @@ const Reader = (() => {
     if (cur !== c) { pdf.destroy(); return; }
     c.pdf = pdf;
     const wrap = $('pdfWrap'), N = pdf.numPages, base = (await pdf.getPage(1)).getViewport({ scale: 1 });
-    const inner = document.createElement('div'); inner.className = 'pdf-inner'; wrap.replaceChildren(inner); // pages live in .pdf-inner (relative box; wide when zoomed)
-    let W = 0, cw = 0, raf = 0, zoomBuilt = 0; c.page = startPage || 1; c.frac = startFrac || 0;
+    const mkInner = () => { const d = document.createElement('div'); d.className = 'pdf-inner'; return d; }; // relative box, as wide as the zoomed pages
+    let inner = mkInner(); wrap.replaceChildren(inner);
+    let W = 0, cw = 0, zoomBuilt = 1, raf = 0, zooming = false, busy = false, seqNo = 0;
+    c.page = startPage || 1; c.frac = startFrac || 0;
+    const clamp01 = x => Math.min(1, Math.max(0, x));
 
     const release = el => { if (!el._on) return; el._on = false; el._gen++; try { el._task && el._task.cancel(); } catch (e) {} el.replaceChildren(); };
-    const draw = async el => { // canvas + text layer for one page
+    const draw = async el => { // canvas + text layer for one page (sizes come from `cw`)
       if (el._on) return; el._on = true; const gen = ++el._gen;
       try {
         const page = await pdf.getPage(+el.dataset.n); if (el._gen !== gen) return;
@@ -414,58 +417,95 @@ const Reader = (() => {
       } catch (e) { if (el._gen === gen) el._on = false; if (!e || e.name !== 'RenderingCancelledException') throw e; }
     };
 
-    const calc = () => { // current page + fraction of it under the 30 % line (exact position)
-      const bx = inner.children, top = wrap.scrollTop + wrap.clientHeight * 0.3; let i = 0;
-      while (i < bx.length - 1 && bx[i].offsetTop + bx[i].offsetHeight + 12 <= top) i++;
-      const b = bx[i], fr = Math.min(1, Math.max(0, (top - b.offsetTop) / (b.offsetHeight || 1)));
-      return { percentage: Math.min(1, (i + fr) / N), location: i + 1, frac: fr };
+    // ---- geometry helpers: a position is (page index, fraction of the page height) ----
+    const pageAt = (box, y) => {
+      const bx = box.children; let i = 0;
+      while (i < bx.length - 1 && bx[i].offsetTop + bx[i].offsetHeight + 12 <= y) i++;
+      const b = bx[i]; return { i, f: clamp01((y - b.offsetTop) / (b.offsetHeight || 1)) };
     };
-    const sync = () => { raf = 0; if (zooming) return; const p = calc(); c.page = p.location; c.frac = p.frac; if (prog) prog(p); };
+    const yOf = (box, i, f) => { const b = box.children[Math.min(N, Math.max(1, i + 1)) - 1]; return b.offsetTop + f * b.offsetHeight; };
+    const calc = () => { // saved reading position = what is under the 30 % line
+      const a = pageAt(inner, wrap.scrollTop + wrap.clientHeight * 0.3);
+      return { percentage: Math.min(1, (a.i + a.f) / N), location: a.i + 1, frac: a.f };
+    };
     c.snap = calc;
-    let zooming = false;
+    const sync = () => { // never while zooming / re-laying out / hidden (a hidden tab reports scrollTop 0)
+      raf = 0; if (zooming || busy || !wrap.clientHeight) return;
+      const p = calc(); c.page = p.location; c.frac = p.frac; if (prog) prog(p);
+    };
 
-    const build = async (at, frac, fx) => { // (re)creates page boxes for the current width; also used on resize / zoom
-      if (c.io) c.io.disconnect(); inner.replaceChildren();
-      zoomBuilt = Display.get().bookZoom;
-      W = wrap.clientWidth; cw = Math.max(200, Math.min(W - 8, 900)) * zoomBuilt;
+    /** Creates the page boxes for the current width and the given zoom inside `box`. */
+    const makePages = (box, zoom) => {
+      zoomBuilt = zoom; W = wrap.clientWidth; cw = Math.max(200, Math.min(W - 8, 900)) * zoom;
       const h = (cw * base.height) / base.width, frag = document.createDocumentFragment();
       for (let n = 1; n <= N; n++) {
         const el = document.createElement('div'); el.className = 'pdf-page'; el.dataset.n = n; el._gen = 0;
         el.style.width = cw + 'px'; el.style.height = h + 'px'; frag.append(el);
       }
-      inner.append(frag);
-      c.io = new IntersectionObserver(es => es.forEach(en => { // lazy render + free far-away canvases
+      box.append(frag);
+    };
+    const observe = () => { // lazy render + free far-away canvases
+      if (c.io) c.io.disconnect();
+      c.io = new IntersectionObserver(es => es.forEach(en => {
         if (en.isIntersecting) draw(en.target).catch(e => console.warn('PDF page', en.target.dataset.n, e));
         else release(en.target);
       }), { root: wrap, rootMargin: '1500px 0px' });
       [...inner.children].forEach(el => c.io.observe(el));
-      const box = inner.children[Math.min(N, Math.max(1, at)) - 1];
-      wrap.scrollTop = Math.max(0, box.offsetTop + (frac || 0) * box.offsetHeight - wrap.clientHeight * 0.3);
-      if (fx != null) wrap.scrollLeft = Math.max(0, fx * wrap.scrollWidth - wrap.clientWidth / 2);   // keep the horizontal centre when zooming
-      inner.style.transform = ''; zooming = false;
-      await draw(box); // first visible page: errors surface to the fallback UI
-      sync();
     };
+    const restoreScroll = () => { wrap.scrollTop = Math.max(0, yOf(inner, c.page - 1, c.frac) - wrap.clientHeight * 0.3); };
+
+    // ---- first layout ----
+    makePages(inner, Display.get().bookZoom); observe(); restoreScroll();
+    await draw(inner.children[Math.min(N, Math.max(1, c.page)) - 1]); // first visible page: errors surface to the fallback UI
+    sync();
 
     wrap.addEventListener('scroll', () => { clearSel(); if (!raf) raf = requestAnimationFrame(sync); }, { passive: true, signal: c.ac.signal });
-    // Called (debounced) by the ResizeObserver on #bookStage; also commits a zoom change
-    c.relayout = () => { if (cur === c && (wrap.clientWidth !== W || Display.get().bookZoom !== zoomBuilt)) c.commit(); };
-    // Smooth zoom: while pinching / dragging the slider the already-rendered pages are only scaled with a GPU transform
-    // (real time, no re-render); when the gesture ends the pages are rendered again at the final size (sharp text).
+
+    // ---- smooth zoom ----
+    // While a pinch / slider drag is running, the pages already on screen are only scaled with a GPU transform around the
+    // viewport centre (instant, no re-render). When the gesture settles, the pages for the NEW size are built and rendered
+    // in a hidden buffer; only when the visible ones are ready they replace the old ones in a single frame, with the same
+    // point of the page still in the centre of the screen. Nothing is ever cleared before its replacement can be shown,
+    // so there is no white flash and no jump.
     c.preview = z => {
-      if (!zooming) { zooming = true; const p = calc(); c.page = p.location; c.frac = p.frac; }
-      inner.style.willChange = 'transform';
-      inner.style.transformOrigin = (wrap.scrollLeft + wrap.clientWidth / 2) + 'px ' + (wrap.scrollTop + wrap.clientHeight / 2) + 'px';
+      seqNo++;                                            // a commit that is still rendering is stale now
+      if (!zooming) {
+        zooming = true;
+        inner.style.willChange = 'transform';
+        inner.style.transformOrigin = (wrap.scrollLeft + wrap.clientWidth / 2) + 'px ' + (wrap.scrollTop + wrap.clientHeight / 2) + 'px';
+      }
       inner.style.transform = 'scale(' + (z / zoomBuilt) + ')';
     };
-    c.commit = () => {
-      if (cur !== c) return;
+    c.commit = async () => {
+      if (cur !== c || !wrap.clientWidth || !wrap.clientHeight) return;
+      const my = ++seqNo; busy = true;
+      const a = pageAt(inner, wrap.scrollTop + wrap.clientHeight / 2);                                   // centre of the screen
       const fx = inner.scrollWidth ? (wrap.scrollLeft + wrap.clientWidth / 2) / inner.scrollWidth : 0.5;
-      clearSel(); build(c.page, c.frac, fx).catch(console.warn);
+      if (c.io) c.io.disconnect();                        // the old pages stay exactly as they are until the swap
+      const next = mkInner();
+      next.style.cssText = 'position:absolute;top:0;left:0;visibility:hidden;pointer-events:none';
+      wrap.append(next);
+      makePages(next, Display.get().bookZoom);
+      const top = yOf(next, a.i, a.f) - wrap.clientHeight / 2;
+      const left = fx * Math.max(next.scrollWidth, wrap.clientWidth) - wrap.clientWidth / 2;
+      const vis = [...next.children].filter(b => b.offsetTop + b.offsetHeight > top && b.offsetTop < top + wrap.clientHeight);
+      try { await Promise.all(vis.map(draw)); } catch (e) { console.warn('PDF zoom render', e); }
+      if (cur !== c || my !== seqNo) { next.remove(); if (my === seqNo) busy = false; return; }          // superseded: keep the old pages
+      clearSel();
+      inner.remove(); inner = next; inner.style.cssText = '';
+      wrap.scrollTop = Math.max(0, top); wrap.scrollLeft = Math.max(0, left);
+      zooming = false; busy = false;
+      observe(); sync();
     };
+    // Called (debounced) by the ResizeObserver on #bookStage (rotation, window size, bars) and after the tab was hidden.
+    c.relayout = wasHidden => {
+      if (cur !== c || !wrap.clientWidth) return;
+      if (wasHidden) restoreScroll();                      // a hidden tab loses its scroll offset: put the saved position back
+      if (wrap.clientWidth !== W || Display.get().bookZoom !== zoomBuilt) c.commit();
+    };
+    c.goTo = pos => { if (!pos || !pos.location) return; c.page = pos.location; c.frac = pos.frac || 0; restoreScroll(); sync(); };
     attach(wrap, { signal: c.ac.signal, scroller: () => wrap });
     attachPinch(wrap, c.ac.signal);
-    await build(c.page, c.frac);
     return N;
   }
 
@@ -513,10 +553,14 @@ const Reader = (() => {
       try { rend.themes.override('font-size', Math.round(px * z * 10) / 10 + 'px', true); } catch (e) {}
     };
     c.applyEpubFont();
-    c.relayout = () => { try { rend.resize(); } catch (e) {} };
+    c.relayout = wasHidden => { try { rend.resize(); if (wasHidden && c.lastCfi) rend.display(c.lastCfi); } catch (e) {} };
     // Smooth zoom: scale the rendered book with a transform while pinching, re-flow once at the end
-    c.preview = z => { eWrap.style.willChange = 'transform'; eWrap.style.transformOrigin = '50% 50%'; eWrap.style.transform = 'scale(' + (z / c.epubZoom) + ')'; };
-    c.commit = () => { c.applyEpubFont(); eWrap.style.willChange = ''; };
+    c.preview = z => { if (!c.zCfi) c.zCfi = c.exactCfi() || c.lastCfi; eWrap.style.willChange = 'transform'; eWrap.style.transformOrigin = '50% 50%'; eWrap.style.transform = 'scale(' + (z / c.epubZoom) + ')'; };
+    c.commit = () => { // re-flow at the final size, then put the same text back at the top
+      const cfi = c.zCfi || c.exactCfi() || c.lastCfi; c.zCfi = null;
+      c.applyEpubFont(); eWrap.style.willChange = '';
+      if (cfi) { c.lastCfi = cfi; setTimeout(() => { Promise.resolve().then(() => rend.display(cfi)).catch(() => {}); }, 120); }   // after the re-flow started
+    };
     /** Character-level CFI of the text at the top of the viewport (scrolled flow); more exact than the paragraph-level start CFI. */
     c.exactCfi = () => {
       if (paged) return null;
@@ -532,7 +576,28 @@ const Reader = (() => {
       } catch (e) {}
       return null;
     };
-    c.snap = () => { const l = rend.currentLocation && rend.currentLocation(); const s = l && l.start; const cfi = c.exactCfi() || (s && s.cfi); return cfi ? { cfi } : null; };
+    c.goTo = pos => { if (pos && pos.cfi) { c.lastCfi = pos.cfi; Promise.resolve().then(() => rend.display(pos.cfi)).catch(() => {}); } };
+    if (!paged) {
+      let st = 0;
+      const wireScroll = () => {
+        const sc = rend.manager && rend.manager.container; if (!sc || sc._rlWired) return; sc._rlWired = true;
+        sc.addEventListener('scroll', () => {
+          clearTimeout(st);
+          st = setTimeout(() => {
+            if (cur !== c || !c.ready || !$('bookStage').clientHeight) return;
+            const cfi = c.exactCfi(); if (!cfi) return;
+            c.lastCfi = cfi; if (prog) prog({ cfi });
+          }, 250);
+        }, { passive: true, signal: c.ac.signal });
+      };
+      rend.on('rendered', wireScroll); wireScroll();
+    }
+    c.snap = () => {
+      const l = rend.currentLocation && rend.currentLocation(); const s = l && l.start;
+      const cfi = c.exactCfi() || (s && s.cfi) || c.lastCfi;
+      if (cfi) c.lastCfi = cfi;                            // also the reference used to restore after a hidden tab / zoom
+      return cfi ? { cfi } : null;
+    };
 
     rend.hooks.content.register(ct => {
       const d = ct.document, st = d.createElement('style');
@@ -549,8 +614,10 @@ const Reader = (() => {
 
     rend.on('relocated', l => {
       const s = l.start; if (!s) return; clearSel();
+      if (!$('bookStage').clientHeight) return;                // hidden tab: the layout is meaningless, do not record it
       const pc = book.locations && book.locations.length() ? book.locations.percentageFromCfi(s.cfi) : s.percentage || 0;
-      if (prog) prog({ percentage: pc, cfi: c.exactCfi() || s.cfi });
+      c.lastCfi = c.exactCfi() || s.cfi;
+      if (prog) prog({ percentage: pc, cfi: c.lastCfi });
     });
 
     // Display the saved position. If the stored CFI fails, fall back to the start.
@@ -587,10 +654,11 @@ const Reader = (() => {
     const anchorGet = () => {
       let lo = 0, hi = items.length - 1; const top = wrap.scrollTop;
       while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (items[mid].offsetTop <= top) lo = mid; else hi = mid - 1; }
-      const it = items[lo];
-      return { tp: lo, tf: it && it.offsetHeight ? Math.min(1, Math.max(0, (top - it.offsetTop) / it.offsetHeight)) : 0 };
+      return { tp: lo, tf: Math.min(1, Math.max(0, (top - items[lo].offsetTop) / span(lo))) };
     };
-    const anchorSet = a => { const it = a && items[Math.min(items.length - 1, Math.max(0, a.tp))]; if (it) wrap.scrollTop = it.offsetTop + (a.tf || 0) * it.offsetHeight; };
+    // a paragraph "slot" runs from its top to the top of the next one (so the margin between paragraphs is part of it)
+    const span = i => { const it = items[i], nx = items[i + 1]; return Math.max(1, nx ? nx.offsetTop - it.offsetTop : it.offsetHeight); };
+    const anchorSet = a => { if (!a) return; const i = Math.min(items.length - 1, Math.max(0, a.tp)); wrap.scrollTop = items[i].offsetTop + (a.tf || 0) * span(i); };
     const calc = () => {
       const mx = wrap.scrollWidth - wrap.clientWidth, my = wrap.scrollHeight - wrap.clientHeight, vertical = my >= mx;
       const p = { percentage: vertical ? (my > 0 ? wrap.scrollTop / my : 1) : (mx > 0 ? wrap.scrollLeft / mx : 0) };
@@ -599,15 +667,21 @@ const Reader = (() => {
     };
     let last = null, zA = null, touched = false;
     wrap.addEventListener('pointerdown', () => { touched = true; }, { passive: true, signal: c.ac.signal });
-    const sync = () => { if (zA) return; last = calc(); if (prog) prog(last); };
+    const sync = () => { if (zA || !wrap.clientHeight) return; last = calc(); if (prog) prog(last); };   // hidden tab: scrollTop reads 0, never save that
     c.snap = calc;
+    c.goTo = pos => {
+      if (!pos) return;
+      if (pos.tp != null) anchorSet(pos);
+      else if (pos.percentage != null) { const my = wrap.scrollHeight - wrap.clientHeight; wrap.scrollTop = pos.percentage * my; }
+      sync();
+    };
     wrap.addEventListener('scroll', () => { clearSel(); sync(); }, { passive: true, signal: c.ac.signal });
     attach(wrap, { signal: c.ac.signal, scroller: () => wrap });
     attachPinch(wrap, c.ac.signal);
     // zoom re-flows the text through a CSS variable (real time); the anchor keeps the same words under the top edge
     c.preview = () => { if (!zA) zA = last || calc(); anchorSet(zA); };
     c.commit = () => { anchorSet(zA || last); zA = null; sync(); };     // `last` = position before the re-flow, also for non-gesture zoom changes
-    c.relayout = () => { if (last && last.tp != null) anchorSet(last); };
+    c.relayout = () => { if (last && last.tp != null) anchorSet(last); };   // also after the tab was hidden
     const restore = () => { // saved position along whichever axis scrolls (paragraph anchor first, percentage as fallback)
       const mx = wrap.scrollWidth - wrap.clientWidth, my = wrap.scrollHeight - wrap.clientHeight;
       if (saved && saved.tp != null && my >= mx) anchorSet(saved);
@@ -646,7 +720,10 @@ const Reader = (() => {
   if (typeof Display !== 'undefined') Display.onChange((s, changed, opts) => applyDisplay(changed, opts));
 
   /** Freshest reading position of the open book (exact scroll anchor / CFI). Used when the book is closed or the app is hidden. */
-  function snapshot() { try { return cur && cur.ready && cur.snap ? cur.snap() : null; } catch (e) { return null; } }
+  /** Jumps to a position taken earlier from snapshot() (bookmarks). */
+  function goTo(pos) { try { if (cur && cur.goTo) cur.goTo(pos); } catch (e) { console.warn('goTo', e); } }
+
+  function snapshot() { try { return cur && cur.ready && !cur.hidden && $('bookStage').clientHeight > 0 && cur.snap ? cur.snap() : null; } catch (e) { return null; } }
 
   // ===================== Public API =====================
   /**
@@ -666,15 +743,26 @@ const Reader = (() => {
     ['pdfWrap', 'epubWrap', 'textWrap'].forEach(i => { $(i).hidden = true; });
     const pr = p || {}, wrapId = { pdf: 'pdfWrap', epub: 'epubWrap' }[book.format] || 'textWrap';
     $(wrapId).hidden = false;
-    // Any change of the book area (rotation, horizontal margin, window resize) re-lays the book out
-    const stage = $('bookStage');
+    // Any change of the book area (rotation, window resize, bars) re-lays the book out. While the Read tab is hidden
+    // (display:none) the size is 0: nothing is re-laid out and nothing is saved; when it is shown again the saved
+    // position is restored (browsers reset the scroll offset of hidden elements).
+    const stage = $('bookStage'), visible = () => stage.clientWidth > 0 && stage.clientHeight > 0;
+    const safeProg = p => { if (visible() && onProgress) onProgress(p); };
     if (stage && window.ResizeObserver) {
-      c.ro = new ResizeObserver(() => { clearTimeout(c.rt); c.rt = setTimeout(() => { if (cur === c && c.relayout) c.relayout(); }, 150); });
+      c.ro = new ResizeObserver(() => {
+        clearTimeout(c.rt);
+        if (!visible()) { c.hidden = true; return; }
+        c.rt = setTimeout(() => {
+          if (cur !== c || !visible()) return;
+          const was = !!c.hidden; c.hidden = false;
+          if (c.relayout) c.relayout(was);
+        }, c.hidden ? 40 : 150);
+      });
       c.ro.observe(stage);
     }
-    if (book.format === 'pdf') await openPDF(buf, Number(pr.location) || 1, Number(pr.frac) || 0, onProgress, c);
-    else if (book.format === 'epub') await openEPUB(buf, pr.cfi, onProgress, c);
-    else await openText(buf, book.format, pr, onProgress, c);
+    if (book.format === 'pdf') await openPDF(buf, Number(pr.location) || 1, Number(pr.frac) || 0, safeProg, c);
+    else if (book.format === 'epub') await openEPUB(buf, pr.cfi, safeProg, c);
+    else await openText(buf, book.format, pr, safeProg, c);
     c.ready = true;                                  // from now on snapshot() may be saved (never before the saved position is restored)
   }
 
@@ -746,7 +834,7 @@ const Reader = (() => {
 
   return {
     open, close, generateCoverForBook, setLongPressDuration, setReadingMode,
-    setMarks, refreshMarks, markKey, updateStyles, applyDisplay, snapshot,
+    setMarks, refreshMarks, markKey, updateStyles, applyDisplay, snapshot, goTo,
     getLongPressDuration: () => lpMs,
     onSelection: f => { cb.select = f; }, onClear: f => { cb.clear = f; }, onBlankTap: f => { cb.blank = f; },
     clearSelection: clearSel, hasSelection: () => !!sel, EDGE
