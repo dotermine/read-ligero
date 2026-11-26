@@ -3,6 +3,14 @@ var I18N = (function () {
 
   var dict = {
     en: {
+      hlVocabSwitch: 'Highlight words added to vocabulary', hlLookSwitch: 'Highlight looked-up words (not in vocabulary)',
+      sysTitle: 'Reading & system', keepAwake: 'Keep the screen awake while reading', keepAlive: 'Keep the app alive in the background',
+      keepAliveHint: 'Holds a background lock while a book is open and reopens the book if the system closed the app. The OS can still end the app when memory is short; position and progress are saved continuously.',
+      floatApps: 'Open dictionary / translator apps in a floating or split-screen window',
+      floatHint: 'Android only, best effort: asks for a window next to the reader. Not every phone, app or Chrome version allows it. Translator apps open from the share sheet.',
+      immersiveInstall: 'Hide the system bars when the installed app starts',
+      immersiveHint: 'Avoids the browser’s “viewing full screen” banner. Takes effect after the app is reinstalled / updated by the browser. In this mode the Fullscreen / Windowed switch has no effect.',
+      noWakeLock: 'This browser has no Screen Wake Lock API.', noWebLocks: 'This browser has no Web Locks API (background lock unavailable).',
       fieldTranscription: 'Transcription',
       bmLabelPage: 'Page {0} · {1}%', bmLabelPct: '{0}%', bmEmpty: 'No bookmarks in this book yet. Tap the bookmark icon to add one.', bookmarks: 'Bookmarks',
       nativeLanguage: 'Native language', nativeHint: 'Translations (external translators and dictionaries) go into this language. Set the language of each book in the reader: display settings → Book language.',
@@ -78,6 +86,14 @@ var I18N = (function () {
       dictTitle: 'Book dictionary', sortAdded: 'Added', sortTitle: 'Title', sortName: 'Name', noLanguages: 'No languages yet.'
     },
     ru: {
+      hlVocabSwitch: 'Подсвечивать слова из словаря', hlLookSwitch: 'Подсвечивать просмотренные слова (не в словаре)',
+      sysTitle: 'Чтение и система', keepAwake: 'Не гасить экран при чтении', keepAlive: 'Не давать системе закрывать приложение в фоне',
+      keepAliveHint: 'Удерживает фоновую блокировку, пока открыта книга, и снова открывает книгу, если система закрыла приложение. ОС всё равно может завершить приложение при нехватке памяти; позиция и прогресс сохраняются постоянно.',
+      floatApps: 'Открывать словари / переводчики в плавающем окне или режиме разделения экрана',
+      floatHint: 'Только Android, по возможности: запрашивает окно рядом с читалкой. Работает не на всех телефонах, приложениях и версиях Chrome. Переводчики открываются через меню «Поделиться».',
+      immersiveInstall: 'Скрывать системные панели при запуске установленного приложения',
+      immersiveHint: 'Убирает баннер браузера «Просмотр в полноэкранном режиме». Вступает в силу после переустановки / обновления приложения браузером. В этом режиме переключатель «Полный экран / В окне» не действует.',
+      noWakeLock: 'В этом браузере нет Screen Wake Lock API.', noWebLocks: 'В этом браузере нет Web Locks API (фоновая блокировка недоступна).',
       fieldTranscription: 'Транскрипция',
       bmLabelPage: 'Страница {0} · {1}%', bmLabelPct: '{0}%', bmEmpty: 'В этой книге пока нет закладок. Нажмите значок закладки, чтобы добавить.', bookmarks: 'Закладки',
       nativeLanguage: 'Родной язык', nativeHint: 'Переводы (внешние переводчики и словари) выполняются на этот язык. Язык каждой книги задаётся в читалке: настройки отображения → Язык книги.',

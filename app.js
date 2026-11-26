@@ -77,13 +77,13 @@
       align: 'left', lineHeight: 1.6, readingMode: 'scroll', lang: 'en',
       longPressMs: 500,
       glossOn: true, glossSize: 55, glossColor: 'amber', lookColor: 'blue', vocabColor: 'amber',
-      newPerSession: 10, studyLang: '', nativeLang: ''
+      newPerSession: 10, studyLang: '', nativeLang: '',
+      hlVocab: true, hlLook: true, keepAwake: true, keepAlive: false, floatApps: false, immersiveInstall: false
     },
     openBookId: null,
     lastBookId: null,
     pendingProgress: null,
     saveTimer: null,
-    wakeLock: null,
     currentLangCode: 'en',
     chrome: false, chromeTimer: null,
     selection: null,
@@ -145,7 +145,9 @@
       ['longPressMs', 500], ['cardFront', DEFAULT_FRONT], ['cardBack', DEFAULT_BACK],
       ['wordSortKey', 'createdAt'], ['wordSortDir', -1],
       ['glossOn', true], ['glossSize', 55], ['glossColor', 'amber'], ['lookColor', 'blue'], ['vocabColor', 'amber'],
-      ['newPerSession', 10], ['studyLang', ''], ['nativeLang', '']
+      ['newPerSession', 10], ['studyLang', ''], ['nativeLang', ''],
+      ['hlVocab', true], ['hlLook', true], ['keepAwake', true], ['keepAlive', false], ['floatApps', false], ['immersiveInstall', false],
+      ['lastOpenBookId', null]
     ];
 
     Promise.all(KEYS.map(function (k) { return getSetting(k[0], k[1]); })).then(function (arr) {
@@ -165,6 +167,9 @@
       state.settings.lookColor = paletteHas(HILITE_COLORS, s.lookColor) ? s.lookColor : 'blue';
       state.settings.vocabColor = paletteHas(HILITE_COLORS, s.vocabColor) ? s.vocabColor : 'amber';
       state.settings.newPerSession = clampNum(s.newPerSession, 0, 200, 10);
+      ['hlVocab', 'hlLook', 'keepAwake'].forEach(function (k) { state.settings[k] = s[k] !== false; });
+      ['keepAlive', 'floatApps', 'immersiveInstall'].forEach(function (k) { state.settings[k] = s[k] === true; });
+      state.lastOpenBookId = s.lastOpenBookId != null ? Number(s.lastOpenBookId) : null;
       state.settings.studyLang = String(s.studyLang || '');
       state.settings.nativeLang = String(s.nativeLang || '') || state.settings.lang;     // default: the interface language
       if (!s.nativeLang) setSetting('nativeLang', state.settings.nativeLang);
@@ -181,6 +186,7 @@
       applyTheme(state.settings.theme);
       applyFontSettings();
       applyMarkStyles();
+      applySystem();
       applyViewMode(state.viewMode);
       renderLangSelect();
       renderNativeSelect();
@@ -194,6 +200,10 @@
       refreshLibrary();
       refreshWords();
       refreshLanguages();
+      // "Keep alive": if the system closed the app while a book was open, come back to that book at its saved position
+      if (state.settings.keepAlive && state.lastOpenBookId) {
+        getBook(state.lastOpenBookId).then(function (b) { if (b) openReader(b.id); }).catch(function () {});
+      }
     });
 
     enforcePersistentStorage().then(refreshStorageInfo).catch(function () {});
@@ -268,6 +278,25 @@
       b.classList.toggle('chip-active', b.getAttribute('data-theme') === t);
     });
     applyMarkStyles();
+    updateThemeColor();
+  }
+
+  /** Status / navigation bars take the colour of the page (never the icon colour), so they follow light / dark / sepia / AMOLED. */
+  function updateThemeColor() {
+    var bg = (getComputedStyle(document.documentElement).getPropertyValue('--bg') || '').trim() || '#ffffff';
+    document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) { m.setAttribute('content', bg); });
+  }
+
+  /** Wake lock, background lock, floating external windows, launch mode of the installed app. */
+  function applySystem() {
+    var st = state.settings;
+    Power.configure({ keepAwake: st.keepAwake, keepAlive: st.keepAlive });
+    ExtLinks.setFloating(st.floatApps);
+    var ml = $('manifestLink'); if (ml) ml.setAttribute('href', st.immersiveInstall ? 'manifest-fullscreen.json' : 'manifest.json');
+    var ps = Power.status(), hint = [];
+    if (!ps.wakeSupported) hint.push(I18N.t('noWakeLock'));
+    if (!ps.locksSupported) hint.push(I18N.t('noWebLocks'));
+    var h = $('powerHint'); if (h) h.textContent = hint.join(' ');
   }
   function applyFontSettings() {
     document.documentElement.style.setProperty('--font-size', state.settings.fontSize + 'px');
@@ -310,6 +339,7 @@
     document.body.setAttribute('data-active-tab', name);
     if (name === 'read' && state.openBookId) Display.enterReader(false); else Display.leaveReader();
     updateImmersive();
+    Power.setReading(name === 'read' && !!state.openBookId);
     if (name !== 'read') { Reader.clearSelection(); closeDictSheet(); }
     if (name !== 'quiz') { var bm = $('bookMenu'); if (bm) bm.hidden = true; }
     if (name === 'library') refreshLibrary();
@@ -526,7 +556,7 @@
     }
     // Outside press (toolbar, nav, anywhere but the reader body / popup) and Esc / resize dismiss the popup
     document.addEventListener('pointerdown', function (e) {
-      if (!pop || pop.hidden || pop.contains(e.target) || e.target.closest('#rbody')) return;
+      if (!pop || pop.hidden || pop.contains(e.target) || e.target.closest('#rbody, .sel-handle')) return;     // the selection handles belong to the selection
       Reader.clearSelection();
     }, true);
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') Reader.clearSelection(); });
@@ -582,7 +612,7 @@
       });
       if (r.error === 'unsupported') { UI.toast(I18N.t('platformUnsupported'), 'warn'); return; }
       if (r.error) { UI.toast(I18N.t('notConfigured'), 'warn'); return; }
-      ExtLinks.open(r.url);
+      ExtLinks.open(r.url, r.fallback);
     });
   }
 
@@ -707,12 +737,13 @@
   function openReader(bookId) {
     var id = Number(bookId);
     state.openBookId = id;
-    state.lastBookId = id;
+    state.lastBookId = id; state.lastOpenBookId = id; setSetting('lastOpenBookId', id);
     state.pendingProgress = null;
     $('noOpenBook').hidden = true;
     $('readerRoot').hidden = false;
     state.chrome = false; clearTimeout(state.chromeTimer);
     showTab('read');
+    Display.enterReader(true);                       // a book was opened by a tap: (re-)apply the saved fullscreen + orientation
     setReaderState('loading');
 
     var engineTimeout = new Promise(function (_, rej) {
@@ -733,9 +764,6 @@
         }, 400);
       }, function (book) {
         $('rtitle').textContent = book.title;
-        if ('wakeLock' in navigator) {
-          navigator.wakeLock.request('screen').then(function (l) { state.wakeLock = l; }).catch(function () {});
-        }
         applyBookLang(book);
       });
     });
@@ -761,7 +789,8 @@
     updateImmersive();
     document.getElementById('readerRoot').hidden = true;
     document.getElementById('noOpenBook').hidden = false;
-    if (state.wakeLock) { try { state.wakeLock.release(); } catch (e) {} state.wakeLock = null; }
+    Power.setReading(false);
+    state.lastOpenBookId = null; setSetting('lastOpenBookId', null);      // closed on purpose: do not restore it
     Display.leaveReader();
     refreshLibrary();
   }
@@ -809,6 +838,7 @@
   function applyBookLang(book) {
     return Promise.all([listLanguages(), db.dictionaries.toArray()]).then(function (r) {
       state.currentLangCode = bookLangFor(book, r[0]);
+      Reader.setLanguage(state.currentLangCode);          // word boundaries for zh / ja / th …
       fillBookLang(r[1]);
     }).catch(function () { state.currentLangCode = 'en'; });
   }
@@ -837,6 +867,7 @@
     var sel = $('bookLang'); if (!sel) return;
     sel.addEventListener('change', function () {
       state.currentLangCode = sel.value;                       // dictionary + translation pair follow at once
+      Reader.setLanguage(sel.value); Reader.refreshMarks();
       if (state.openBookId) db.books.update(Number(state.openBookId), { langCode: sel.value }).catch(function () {});
     });
   }
@@ -981,6 +1012,8 @@
     r.setProperty('--mk-vocab', dk ? v.dark : v.light);
     r.setProperty('--gloss-size', (st.glossSize / 100) + 'em');
     document.documentElement.classList.toggle('no-gloss', !st.glossOn);
+    document.documentElement.classList.toggle('no-hl-vocab', !st.hlVocab);     // two independent highlight switches
+    document.documentElement.classList.toggle('no-hl-look', !st.hlLook);
     Reader.updateStyles();
   }
 
@@ -992,8 +1025,7 @@
 
   function renderSettingsControls() {
     setSwitchLabels();
-    var sw = $('glossOn');
-    if (sw) sw.setAttribute('aria-checked', String(!!state.settings.glossOn));
+    document.querySelectorAll('[data-switch]').forEach(function (el) { el.setAttribute('aria-checked', String(!!state.settings[el.getAttribute('data-switch')])); });
     document.querySelectorAll('[data-stepper]').forEach(function (el) {
       var k = el.getAttribute('data-stepper'), cfg = STEPPERS[k], out = el.querySelector('.stepper-val');
       if (!cfg || !out) return;
@@ -1046,10 +1078,14 @@
   function bindDisplaySettings() {
     var nat = $('setNative');
     if (nat) nat.addEventListener('change', function () { state.settings.nativeLang = nat.value; setSetting('nativeLang', nat.value); });
-    var sw = $('glossOn');
-    if (sw) sw.addEventListener('click', function () {
-      state.settings.glossOn = !state.settings.glossOn;
-      setSetting('glossOn', state.settings.glossOn); renderSettingsControls(); applyMarkStyles();
+    var onSwitch = { glossOn: applyMarkStyles, hlVocab: applyMarkStyles, hlLook: applyMarkStyles, keepAwake: applySystem, keepAlive: applySystem, floatApps: applySystem, immersiveInstall: applySystem };
+    document.querySelectorAll('[data-switch]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var k = el.getAttribute('data-switch');
+        state.settings[k] = !state.settings[k];
+        setSetting(k, state.settings[k]); renderSettingsControls();
+        if (onSwitch[k]) onSwitch[k]();
+      });
     });
     document.querySelectorAll('[data-stepper]').forEach(function (el) {
       var k = el.getAttribute('data-stepper'), cfg = STEPPERS[k];

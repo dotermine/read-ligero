@@ -38,17 +38,16 @@ const Reader = (() => {
     if (!root) return;
     clearMarks(root);
     if (!marks.vocab.size && !marks.looked.size) return;
-    const doc = root.ownerDocument, tw = doc.createTreeWalker(root, 4), nodes = [], W = /[\p{L}\p{M}\p{N}'’]+/gu;
+    const doc = root.ownerDocument, tw = doc.createTreeWalker(root, 4), nodes = [];
     let n; while ((n = tw.nextNode())) if (n.data.trim()) nodes.push(n);
     for (const node of nodes) {
-      const hits = []; let m; W.lastIndex = 0;
-      while ((m = W.exec(node.data))) {
-        const raw = m[0], core = raw.replace(/^['’]+|['’]+$/g, ''), k = markKey(core);
+      const hits = [];
+      for (const [a, b] of wordRanges(node.data)) {
+        const k = markKey(node.data.slice(a, b));
         if (!k) continue;
         const inVocab = marks.vocab.has(k);
         if (!inVocab && !marks.looked.has(k)) continue;
-        const a = m.index + (raw.length - raw.replace(/^['’]+/, '').length);
-        hits.push([a, a + core.length, inVocab ? 'vocab' : 'look', inVocab ? marks.vocab.get(k) : '']);
+        hits.push([a, b, inVocab ? 'vocab' : 'look', inVocab ? marks.vocab.get(k) : '']);
       }
       for (let i = hits.length - 1; i >= 0; i--) { // reverse: earlier offsets stay valid after each split
         const [a, b, kind, tr] = hits[i], r = doc.createRange(), sp = doc.createElement('span');
@@ -71,13 +70,31 @@ const Reader = (() => {
   }
 
   // ===================== Sentence / word parsing =====================
-  const SEG = typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(undefined, { granularity: 'word' }) : null;
+  // Words of languages written without spaces (Chinese, Japanese, Thai, Khmer, Lao, Myanmar) come from Intl.Segmenter, which
+  // is locale-aware: the book language is passed in (setLanguage). Space-delimited languages use the same segmenter for taps
+  // and a plain letter-run scan for the vocabulary marks.
+  const mkSeg = lang => { try { return typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(lang || undefined, { granularity: 'word' }) : null; } catch (e) { return new Intl.Segmenter(undefined, { granularity: 'word' }); } };
+  let SEG = mkSeg();
+  const SPACELESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+  /** Language of the open book (ISO code) → better word boundaries for zh / ja / th … */
+  const setLanguage = code => { SEG = mkSeg(code); };
+  /** [start,end) of every word of `t`. */
+  function wordRanges(t) {
+    const out = [];
+    if (SEG && SPACELESS.test(t)) { for (const g of SEG.segment(t)) if (g.isWordLike) out.push([g.index, g.index + g.segment.length]); return out; }
+    const W = /[\p{L}\p{M}\p{N}'’]+/gu; let m;
+    while ((m = W.exec(t))) {
+      const raw = m[0], lead = raw.length - raw.replace(/^['’]+/, '').length, core = raw.replace(/^['’]+|['’]+$/g, '');
+      if (core) out.push([m.index + lead, m.index + lead + core.length]);
+    }
+    return out;
+  }
   const ABBR = /^(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|e\.g|i\.e|fig|no|vol|inc|ltd|co|cf|al|approx|dept|est)$/i;
   const CLOSER = /["'»”’)\]]/;
 
   /** Word [start,end) around caret offset `i` in `t`, or null. Windowed so huge text nodes stay fast. */
   function wordBounds(t, i) {
-    const lo = Math.max(0, i - 80), s = t.slice(lo, Math.min(t.length, i + 80)), p = i - lo, L = /[\p{L}\p{N}]/u;
+    const lo = Math.max(0, i - 200), s = t.slice(lo, Math.min(t.length, i + 200)), p = i - lo, L = /[\p{L}\p{N}]/u;
     const k = p < s.length && L.test(s[p]) ? p : p > 0 && L.test(s[p - 1]) ? p - 1 : -1;
     if (k < 0) return null;
     if (SEG) {
@@ -200,7 +217,7 @@ const Reader = (() => {
   function clearSel() {
     clearTimeout(timer);
     if (!sel) return;
-    wipe(sel.win); sel = null;
+    wipe(sel.win); sel = null; hideHandles();
     if (cb.clear) cb.clear();
   }
 
@@ -225,8 +242,52 @@ const Reader = (() => {
     if (!rs.length) return;
     const f0 = rs[0], l0 = rs[rs.length - 1];
     if (cb.select) cb.select({ text, context: ctx, rect: { top: f0.top + fr.top, bottom: l0.bottom + fr.top, left: f0.left + fr.left, x: (f0.left + f0.right) / 2 + fr.left } });
+    showHandles();
   }
   const emitSoon = ms => { clearTimeout(timer); timer = setTimeout(emit, ms); };
+
+  // ===================== Selection handles (free selection of letters, words, sentences) =====================
+  // After a long press / double tap two draggable handles mark the ends of the selection. Dragging one moves that end
+  // character by character (the caret is read ABOVE the finger so it stays visible); when released the action popup returns.
+  let handles = null;
+  const frameOff = w => { const fe = w && w.frameElement; return fe ? fe.getBoundingClientRect() : { left: 0, top: 0 }; };
+  function hideHandles() { if (handles) { handles.a.remove(); handles.b.remove(); handles = null; } }
+  function placeHandles() {
+    if (!handles || !sel) return;
+    const rs = [...sel.r.getClientRects()].filter(k => k.width > 0 || k.height > 0); if (!rs.length) return;
+    const f = frameOff(sel.win), a = rs[0], b = rs[rs.length - 1];
+    handles.a.style.transform = 'translate(' + (a.left + f.left) + 'px,' + (a.bottom + f.top) + 'px)';
+    handles.b.style.transform = 'translate(' + (b.right + f.left) + 'px,' + (b.bottom + f.top) + 'px)';
+  }
+  function showHandles() {
+    hideHandles(); if (!sel) return;
+    const mk = which => { const d = document.createElement('div'); d.className = 'sel-handle sel-handle-' + which; d.setAttribute('aria-hidden', 'true'); document.body.appendChild(d); return d; };
+    handles = { a: mk('start'), b: mk('end') };
+    const bind = (el, start) => {
+      let drag = null;
+      el.addEventListener('pointerdown', e => {
+        e.preventDefault(); e.stopPropagation();
+        try { el.setPointerCapture(e.pointerId); } catch (x) {}
+        drag = { start }; clearTimeout(timer); if (cb.clear) cb.clear();          // hide the popup while dragging
+      });
+      el.addEventListener('pointermove', e => {
+        if (!drag || !sel) return;
+        const w = sel.win, f = frameOff(w), c = caretAt(w.document, e.clientX - f.left, e.clientY - f.top - 22);
+        if (!c) return;
+        const r = sel.r, nr = r.cloneRange(), p = w.document.createRange();
+        p.setStart(c.n, c.o); p.collapse(true);
+        if (drag.start) { if (p.compareBoundaryPoints(2, r) > 0) { nr.setStart(r.endContainer, r.endOffset); nr.setEnd(c.n, c.o); drag.start = false; } else nr.setStart(c.n, c.o); }
+        else if (p.compareBoundaryPoints(0, r) < 0) { nr.setEnd(r.startContainer, r.startOffset); nr.setStart(c.n, c.o); drag.start = true; }
+        else nr.setEnd(c.n, c.o);
+        if (!nr.collapsed) { paint(nr); placeHandles(); }
+      });
+      const done = () => { if (!drag) return; drag = null; emit(); };
+      el.addEventListener('pointerup', done); el.addEventListener('pointercancel', done);
+    };
+    bind(handles.a, true); bind(handles.b, false);
+    placeHandles();
+  }
+  window.addEventListener('resize', () => placeHandles());
 
   // ===================== Unified pointer gestures =====================
   /**
@@ -244,7 +305,8 @@ const Reader = (() => {
     const end = () => { if (g) { clearTimeout(g.timer); g = null; } };
     const begin = G => { // enter free-selection mode at the press point
       if (g !== G || G.free) return;
-      const w = pick(doc, G.x, G.y, 'word');
+      let w = null;
+      for (const [dx, dy] of [[0, 0], [10, 0], [-10, 0], [0, 10], [0, -10], [22, 0], [-22, 0], [0, 20], [0, -20]]) { w = pick(doc, G.x + dx, G.y + dy, 'word'); if (w) break; }
       if (!w) return;
       G.free = true; G.anchor = w; paint(w);
       try { root.setPointerCapture(G.id); } catch (e) {}
@@ -354,12 +416,12 @@ const Reader = (() => {
   }
 
   // ===================== PDF =====================
-  const mc = document.createElement('canvas').getContext('2d'), ascents = {};
-  /** Ascent/(ascent+descent) of a font family, used to place text-layer spans exactly like pdf.js does. */
+  const mc = document.createElement('canvas').getContext('2d');
+  /** Ascent/(ascent+descent) of a font family, only used when pdf.js gives no metrics for the font. Never cached:
+   *  a measurement taken before the font finished loading would be wrong for every later page. */
   function ascent(fam) {
-    if (fam in ascents) return ascents[fam];
     mc.font = '30px ' + fam; const m = mc.measureText(''), a = m.fontBoundingBoxAscent, d = Math.abs(m.fontBoundingBoxDescent);
-    return (ascents[fam] = a ? a / (a + d) : 0.8);
+    return a ? a / (a + d) : 0.8;
   }
 
   /**
@@ -374,7 +436,8 @@ const Reader = (() => {
       if (!it.str) { if (it.hasEOL && last) last.dataset.eol = '1'; continue; }
       const st = tc.styles[it.fontName] || {}, fam = st.fontFamily || 'sans-serif', tx = T(vp.transform, it.transform);
       let ang = Math.atan2(tx[1], tx[0]); if (st.vertical) ang += Math.PI / 2;
-      const fh = Math.hypot(tx[2], tx[3]), fa = fh * ascent(fam);
+      // pdf.js supplies the real ascent of the font (style.ascent / style.descent); measuring a fallback font was the cause of offset boxes
+      const fh = Math.hypot(tx[2], tx[3]), fa = st.ascent ? fh * st.ascent : st.descent ? fh * (1 + st.descent) : fh * ascent(fam);
       const left = ang ? tx[4] + fa * Math.sin(ang) : tx[4], top = ang ? tx[5] - fa * Math.cos(ang) : tx[5] - fa;
       const sp = document.createElement('span'); sp.textContent = it.str;
       let tr = ang ? `rotate(${ang}rad)` : '';
@@ -387,7 +450,7 @@ const Reader = (() => {
   }
 
   /** startPage + startFrac restore the exact scroll position (frac = fraction of the page height under the 30% line). */
-  async function openPDF(buf, startPage, startFrac, prog, c) {
+  async function openPDF(buf, startPage, startFrac, prog, c, startHx) {
     if (!window.pdfjsLib) throw new Error('PDF engine is not loaded. Connect once to cache it for offline use.');
     const pdf = await pdfjsLib.getDocument(Object.assign({ data: new Uint8Array(buf.slice(0)) }, PDF_ASSETS)).promise; // copy: pdf.js may transfer the buffer
     if (cur !== c) { pdf.destroy(); return; }
@@ -396,7 +459,7 @@ const Reader = (() => {
     const mkInner = () => { const d = document.createElement('div'); d.className = 'pdf-inner'; return d; }; // relative box, as wide as the zoomed pages
     let inner = mkInner(); wrap.replaceChildren(inner);
     let W = 0, cw = 0, zoomBuilt = 1, raf = 0, zooming = false, busy = false, seqNo = 0;
-    c.page = startPage || 1; c.frac = startFrac || 0;
+    c.page = startPage || 1; c.frac = startFrac || 0; c.hx = startHx != null ? startHx : null;   // hx = horizontal centre of the view as a fraction of the page width
     const clamp01 = x => Math.min(1, Math.max(0, x));
 
     const release = el => { if (!el._on) return; el._on = false; el._gen++; try { el._task && el._task.cancel(); } catch (e) {} el.replaceChildren(); };
@@ -409,11 +472,12 @@ const Reader = (() => {
         const cv = document.createElement('canvas'); cv.width = Math.round(vp.width * dpr); cv.height = Math.round(vp.height * dpr);
         el.append(cv);
         const task = el._task = page.render({ canvasContext: cv.getContext('2d'), viewport: vp, transform: [cv.width / vp.width, 0, 0, cv.height / vp.height, 0, 0] });
-        const tc = await page.getTextContent(); if (el._gen !== gen) return;
+        const tc = await page.getTextContent();
+        await task.promise;                                  // fonts are loaded once the page is rendered: measure text with the REAL font
+        if (el._gen !== gen) return;
         const layer = textLayer(tc, vp);
         applyMarks(layer); // vocabulary / lookup highlighting
         el.append(layer);
-        await task.promise;
       } catch (e) { if (el._gen === gen) el._on = false; if (!e || e.name !== 'RenderingCancelledException') throw e; }
     };
 
@@ -426,12 +490,14 @@ const Reader = (() => {
     const yOf = (box, i, f) => { const b = box.children[Math.min(N, Math.max(1, i + 1)) - 1]; return b.offsetTop + f * b.offsetHeight; };
     const calc = () => { // saved reading position = what is under the 30 % line
       const a = pageAt(inner, wrap.scrollTop + wrap.clientHeight * 0.3);
-      return { percentage: Math.min(1, (a.i + a.f) / N), location: a.i + 1, frac: a.f };
+      const sw = Math.max(inner.scrollWidth, wrap.clientWidth);
+      const hx = sw > wrap.clientWidth ? (wrap.scrollLeft + wrap.clientWidth / 2) / sw : 0.5;     // horizontal offset (also kept while the view is locked)
+      return { percentage: Math.min(1, (a.i + a.f) / N), location: a.i + 1, frac: a.f, hx: Math.round(hx * 10000) / 10000 };
     };
     c.snap = calc;
     const sync = () => { // never while zooming / re-laying out / hidden (a hidden tab reports scrollTop 0)
       raf = 0; if (zooming || busy || !wrap.clientHeight) return;
-      const p = calc(); c.page = p.location; c.frac = p.frac; if (prog) prog(p);
+      const p = calc(); c.page = p.location; c.frac = p.frac; c.hx = p.hx; if (prog) prog(p);
     };
 
     /** Creates the page boxes for the current width and the given zoom inside `box`. */
@@ -452,7 +518,11 @@ const Reader = (() => {
       }), { root: wrap, rootMargin: '1500px 0px' });
       [...inner.children].forEach(el => c.io.observe(el));
     };
-    const restoreScroll = () => { wrap.scrollTop = Math.max(0, yOf(inner, c.page - 1, c.frac) - wrap.clientHeight * 0.3); };
+    const restoreScroll = () => {
+      wrap.scrollTop = Math.max(0, yOf(inner, c.page - 1, c.frac) - wrap.clientHeight * 0.3);
+      const sw = Math.max(inner.scrollWidth, wrap.clientWidth);
+      if (c.hx != null && sw > wrap.clientWidth) wrap.scrollLeft = Math.max(0, c.hx * sw - wrap.clientWidth / 2);   // programmatic scrolling works even with overflow-x:hidden (locked)
+    };
 
     // ---- first layout ----
     makePages(inner, Display.get().bookZoom); observe(); restoreScroll();
@@ -503,7 +573,7 @@ const Reader = (() => {
       if (wasHidden) restoreScroll();                      // a hidden tab loses its scroll offset: put the saved position back
       if (wrap.clientWidth !== W || Display.get().bookZoom !== zoomBuilt) c.commit();
     };
-    c.goTo = pos => { if (!pos || !pos.location) return; c.page = pos.location; c.frac = pos.frac || 0; restoreScroll(); sync(); };
+    c.goTo = pos => { if (!pos || !pos.location) return; c.page = pos.location; c.frac = pos.frac || 0; if (pos.hx != null) c.hx = pos.hx; restoreScroll(); sync(); };
     attach(wrap, { signal: c.ac.signal, scroller: () => wrap });
     attachPinch(wrap, c.ac.signal);
     return N;
@@ -517,7 +587,9 @@ const Reader = (() => {
       `::highlight(reader-sel){background-color:${v('--sel') || 'rgba(26,115,232,.35)'}}` +
       `.rt-mark{border-radius:3px;position:relative}.rt-vocab{background:${v('--mk-vocab')}}.rt-look{background:${v('--mk-look')}}` +
       `.rt-vocab[data-tr]::before{content:attr(data-tr);position:absolute;left:50%;bottom:100%;transform:translateX(-50%);font-size:${v('--gloss-size') || '.55em'};line-height:1;white-space:nowrap;color:${v('--mk-rt')};font-weight:600;pointer-events:none;max-width:12em;overflow:hidden;text-overflow:ellipsis}` +
-      (document.documentElement.classList.contains('no-gloss') ? '.rt-vocab[data-tr]::before{display:none}' : '');
+      (document.documentElement.classList.contains('no-gloss') ? '.rt-vocab[data-tr]::before{display:none}' : '') +
+      (document.documentElement.classList.contains('no-hl-vocab') ? '.rt-vocab{background:transparent}' : '') +
+      (document.documentElement.classList.contains('no-hl-look') ? '.rt-look{background:transparent}' : '');
   };
 
   async function openEPUB(buf, cfi, prog, c) {
@@ -760,7 +832,7 @@ const Reader = (() => {
       });
       c.ro.observe(stage);
     }
-    if (book.format === 'pdf') await openPDF(buf, Number(pr.location) || 1, Number(pr.frac) || 0, safeProg, c);
+    if (book.format === 'pdf') await openPDF(buf, Number(pr.location) || 1, Number(pr.frac) || 0, safeProg, c, pr.hx != null ? Number(pr.hx) : null);
     else if (book.format === 'epub') await openEPUB(buf, pr.cfi, safeProg, c);
     else await openText(buf, book.format, pr, safeProg, c);
     c.ready = true;                                  // from now on snapshot() may be saved (never before the saved position is restored)
@@ -834,7 +906,7 @@ const Reader = (() => {
 
   return {
     open, close, generateCoverForBook, setLongPressDuration, setReadingMode,
-    setMarks, refreshMarks, markKey, updateStyles, applyDisplay, snapshot, goTo,
+    setMarks, refreshMarks, markKey, updateStyles, applyDisplay, snapshot, goTo, setLanguage,
     getLongPressDuration: () => lpMs,
     onSelection: f => { cb.select = f; }, onClear: f => { cb.clear = f; }, onBlankTap: f => { cb.blank = f; },
     clearSelection: clearSel, hasSelection: () => !!sel, EDGE

@@ -52,13 +52,19 @@ var Display = (function () {
   function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
   function setPseudo(on) { root.classList.toggle('pseudo-fs', !!on); }
 
+  /**
+   * Enters fullscreen. Resolves 'native' | 'pseudo' (no Fullscreen API at all, e.g. iPhone) | 'blocked' (the browser refused
+   * because there was no user gesture — the caller arms a one-shot gesture hook and retries on the next tap).
+   * navigationUI:'hide' asks the browser to keep its own navigation hints out of the way where it honours that.
+   */
   function enterFullscreen() {
     var el = root, req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
     if (!req) { setPseudo(true); return Promise.resolve('pseudo'); }
-    try {
-      return Promise.resolve(req.call(el)).then(function () { setPseudo(false); return 'native'; })
-        .catch(function () { setPseudo(true); return 'pseudo'; });
-    } catch (e) { setPseudo(true); return Promise.resolve('pseudo'); }
+    function call(opts) { return Promise.resolve(opts ? req.call(el, opts) : req.call(el)); }
+    return call({ navigationUI: 'hide' })
+      .catch(function (e) { return e && e.name === 'TypeError' ? call() : Promise.reject(e); })    // options not understood: plain request
+      .then(function () { setPseudo(false); return 'native'; })
+      .catch(function () { return 'blocked'; });
   }
 
   function exitFullscreen() {
@@ -68,16 +74,43 @@ var Display = (function () {
     try { return Promise.resolve(ex && ex.call(document)).catch(function () {}); } catch (e) { return Promise.resolve(); }
   }
 
-  /** Fullscreen follows the user's choice everywhere (it is NOT left when switching tabs: every re-entry makes the
-   *  browser show its own "viewing full screen" banner). */
-  function applyScreen() { return S.screenMode === 'fullscreen' ? (fsElement() || root.classList.contains('pseudo-fs') ? Promise.resolve() : enterFullscreen()) : exitFullscreen(); }
+  /** Fullscreen follows the user's choice everywhere (it is NOT left when switching tabs: every re-entry makes the browser show its
+   *  own "viewing full screen" banner). */
+  function applyScreen() {
+    if (S.screenMode !== 'fullscreen') return exitFullscreen();
+    if (fsElement() || root.classList.contains('pseudo-fs')) return Promise.resolve();
+    return enterFullscreen().then(function (m) { if (m === 'blocked') armGesture(); return m; });
+  }
+
+  // The browser only allows fullscreen / orientation lock right after a user gesture. When the system dropped them while the
+  // app was in the background, they are restored at once if possible, otherwise on the very next tap (invisible to the user).
+  var gestureArmed = false;
+  function armGesture() {
+    if (gestureArmed) return; gestureArmed = true;
+    var evs = ['pointerup', 'touchend', 'click', 'keydown'];
+    function fire() {
+      evs.forEach(function (t) { document.removeEventListener(t, fire, true); });
+      gestureArmed = false;
+      reapply(false);
+    }
+    evs.forEach(function (t) { document.addEventListener(t, fire, true); });
+  }
+
+  /** Re-applies the SAVED fullscreen + orientation state (the Settings always show the saved values). */
+  function reapply(silent) {
+    var jobs = [];
+    if (S.screenMode === 'fullscreen' && !fsElement() && !root.classList.contains('pseudo-fs')) jobs.push(applyScreen());
+    if (active && S.orientation !== 'auto') jobs.push(applyOrientation(silent));
+    return Promise.all(jobs);
+  }
 
   function onFsChange() {
     if (fsElement() || S.screenMode !== 'fullscreen' || root.classList.contains('pseudo-fs')) return;
-    // Fullscreen ended. When that happens while the app goes to / returns from the background (external translator,
-    // app switcher) it is the system's doing: show the real state but do NOT overwrite the user's saved choice.
-    var system = document.visibilityState === 'hidden' || Date.now() - lastVisChange < 2000;
-    set({ screenMode: 'windowed' }, { fromSystem: system, transient: system });
+    // Fullscreen ended. Around a visibility change (external dictionary / translator, app switcher) that is the system's doing:
+    // keep the saved choice and restore it on return. Otherwise the user left fullscreen on purpose (system gesture / Back).
+    var system = document.visibilityState === 'hidden' || Date.now() - lastVisChange < 2500;
+    if (system) { armGesture(); return; }
+    set({ screenMode: 'windowed' });
   }
 
   // ===================== Orientation =====================
@@ -105,7 +138,8 @@ var Display = (function () {
     if (!(screen.orientation && screen.orientation.lock)) return Promise.resolve(fallback());
     var type = LOCK_TYPE[o];
     return screen.orientation.lock(type).then(function () { return 'api'; }).catch(function () {
-      if (!silent && !fsElement() && !root.classList.contains('pseudo-fs')) {
+      if (silent) { armGesture(); return 'none'; }                   // not allowed right now (no gesture / not fullscreen): retry on the next tap
+      if (!fsElement() && !root.classList.contains('pseudo-fs')) {
         // Chrome only allows lock() in fullscreen (outside an installed standalone window)
         return enterFullscreen().then(function (m) {
           if (m !== 'native') return fallback();
@@ -172,11 +206,11 @@ var Display = (function () {
   /** The reader tab is hidden / closed: only the orientation lock is released. Fullscreen stays as the user left it. */
   function leaveReader() { active = false; unlockOrientation(); return Promise.resolve(); }
 
-  /** Back from another app / the app switcher: re-assert what the system may have dropped (orientation lock, zoom, controls). */
+  /** Back from another app / the app switcher: re-assert what the system may have dropped (fullscreen, orientation lock, zoom, controls). */
   function resume() {
     lastVisChange = Date.now();
     applyCss(); render();
-    if (active && S.orientation !== 'auto') applyOrientation(true);
+    reapply(true);
   }
 
   // ===================== Controls (reader bar + Settings tab) =====================
@@ -237,7 +271,7 @@ var Display = (function () {
     });
     document.addEventListener('visibilitychange', function () { lastVisChange = Date.now(); if (document.visibilityState === 'visible') resume(); });
     window.addEventListener('pageshow', resume);
-    window.addEventListener('focus', function () { if (Date.now() - lastVisChange > 300) resume(); });
+    window.addEventListener('focus', function () { resume(); });
     document.addEventListener('fullscreenchange', onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
     render();

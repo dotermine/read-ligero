@@ -74,7 +74,7 @@ files first and import afterwards, to get reading progress back.
 npm test                       # portable unit tests (SRS engine, dictionary parsers, external-link builder)
 python3 tests/make-fixtures.py # (re)build StarDict/TSV fixtures
 # Browser end-to-end tests (Playwright + Chromium; edit the require() path at the top for your machine):
-python3 -m http.server 8765 &  node tests/e2e-smoke.js && node tests/e2e-features.js && node tests/e2e-round3.js && node tests/e2e-round4.js && node tests/e2e-zoom.js && node tests/e2e-migration.js
+python3 -m http.server 8765 &  node tests/e2e-smoke.js && node tests/e2e-features.js && node tests/e2e-round3.js && node tests/e2e-round4.js && node tests/e2e-round5.js && node tests/e2e-zoom.js && node tests/e2e-migration.js
 # offline on a host that redirects /index.html → / (Netlify / Cloudflare Pages style):
 node tests/redirect-server.js . 8780 &  node tests/e2e-offline.js http://localhost:8780/
 ```
@@ -177,3 +177,52 @@ Transcription can be shown on flashcards (Quiz → Card sides).
 **Refactor.** New modules `customselect.js` and `bookmarks.js`; PDF engine rewritten around a position model (page + fraction) instead of
 scattered scroll maths; dead code removed (`androidApp`, pseudo-fullscreen branches, fixed-step zoom rounding).
 `app.js` is still one large file — splitting it further needs a shared-state module and was not attempted in this round.
+
+
+## Round 5 — what changed and why
+
+**Return from an external app.** The saved fullscreen / orientation choice is no longer replaced by what the system did in the
+background: the Settings keep showing it, and on `visibilitychange` / `focus` / `pageshow` it is re-applied. Browsers allow fullscreen and
+`orientation.lock()` only right after a user gesture, so the app tries at once and, if refused, silently retries on the very next tap
+(one-shot hook). Leaving fullscreen yourself (system gesture) is still respected.
+
+**Horizontal position.** PDF progress now stores `hx` (horizontal centre of the view as a fraction of the page width) next to page + fraction,
+in progress and in bookmarks. It is restored after reopening even when the view is locked (programmatic scrolling works with `overflow-x:hidden`).
+
+**Wake lock / keep-alive** (`power.js`, Settings → *Reading & system*). *Keep the screen awake*: Screen Wake Lock while a book is open and
+visible, re-requested whenever the app becomes visible (the browser drops it in the background). *Keep the app alive*: holds a shared Web
+Lock while a book is open (Chrome does not freeze such pages) and reopens the last book at its saved position if the system closed the app.
+A web page cannot *force* the OS to keep it running — low memory can still end it; progress is saved continuously, which is the real safety net.
+
+**Fullscreen banner.** Chrome's "viewing full screen" message is drawn by the browser and cannot be disabled by web code. Mitigations:
+fullscreen is requested with `navigationUI:'hide'`, never re-entered on tab switches, and an opt-in *Hide the system bars when the installed app starts*
+switches the manifest to `manifest-fullscreen.json` (`display: fullscreen`), which starts the installed app without the Fullscreen API and
+therefore without the banner (takes effect when the browser updates / you reinstall the app; the Fullscreen/Windowed switch is moot in that mode).
+
+**System bars.** `theme_color` / `background_color` in the manifest are neutral white (they were the amber icon colour). The two
+`<meta name="theme-color">` tags start with the system light/dark scheme and are then kept equal to the page background of the active
+theme (light / sepia / dark / AMOLED), so the status and navigation bars blend in.
+
+**External apps.** Chrome only launches `intent:` URLs whose target activity is BROWSABLE; the text entry points of translator apps
+(share / process-text) are not, so the old link silently fell back to the web URL, which the Translate app then opened *empty*. On Android
+the translator presets now hand the word to the installed app through the system share sheet (`navigator.share`) — the same path as
+*Share → Translate* — which pre-fills and translates it (one extra tap to pick the app; the language pair is the one set in the app).
+Presets *Share sheet (any translator / dictionary app)* exist too. *Open … in a floating or split-screen window* adds
+`launchFlags=0x10001000` (NEW_TASK | LAUNCH_ADJACENT) to Android intents — best effort, Chrome/OEMs may ignore it.
+
+**PDF highlights.** Two causes of offset boxes: the text layer was measured with a *fallback* font before the real one had loaded (and the
+wrong ascent was then cached for every later page). Now the real ascent from pdf.js is used and the layer is built after the page rendered.
+Tested against the glyph pixels of the canvas (≤ 2.5 px at 100 % and 180 %) with the bundled Helvetica test PDF.
+
+**Selection.** Long press selects the word under the finger (a press between words picks the nearest one) and two draggable handles
+appear; dragging a handle moves that end letter by letter, the action popup returns on release. Handles also appear after a double tap.
+Bug fixed on the way: the app-level "tap outside dismisses the selection" handler treated the handles as outside.
+
+**Languages without spaces.** Word boundaries come from `Intl.Segmenter` for Chinese, Japanese, Thai, Khmer, Lao and Myanmar text, using the
+book language as locale; the vocabulary marks use the same tokenizer (a saved Chinese word is highlighted alone, not the whole run).
+Sentence selection recognises `。！？`.
+
+**Settings / Quiz.** Dropdown lists were drawn at z-index 9800, *below* the modal (10000); they are now above everything (30000).
+Two independent switches: highlight saved words / highlight looked-up words (the translation above a saved word is a third switch).
+The study session is a fixed overlay between the top of the screen and the tab bar, with safe-area padding, so *Quit* can no longer scroll away or
+sit under the status bar in fullscreen.

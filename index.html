@@ -7,12 +7,17 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="ReadLigero">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   
   <!-- Browser and Android status bar color matching the icon background -->
-  <meta name="theme-color" content="#F59E0B">
   
   <title>ReadLigero</title>
-  <link rel="manifest" href="manifest.json">
+  <!-- System bars (status / navigation) follow the system light/dark scheme until the app theme is applied; app.js then keeps
+       these two tags equal to the page background, so the bars blend in instead of showing the icon colour -->
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000000">
+  <meta name="color-scheme" content="light dark">
+  <link id="manifestLink" rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="style.css">
 
   <!-- Favicons for desktop and mobile browser tabs -->
@@ -336,7 +341,9 @@
   <div class="card" style="margin-top:12px">
     <div class="set-block">
       <div class="set-label" data-i18n="vocabHighlight">Vocabulary highlighting</div>
-      <div class="set-row"><span data-i18n="glossShow">Translation above saved words</span><button type="button" role="switch" class="switch" id="glossOn" aria-checked="true" aria-label="Show translation above saved words"><span class="switch-knob"></span></button></div>
+      <div class="set-row"><span data-i18n="glossShow">Translation above saved words</span><button type="button" role="switch" class="switch" id="glossOn" data-switch="glossOn" aria-checked="true" aria-label="Show translation above saved words"><span class="switch-knob"></span></button></div>
+      <div class="set-row"><span data-i18n="hlVocabSwitch">Highlight words added to vocabulary</span><button type="button" role="switch" class="switch" data-switch="hlVocab" aria-checked="false" aria-label="Highlight words added to vocabulary"><span class="switch-knob"></span></button></div>
+      <div class="set-row"><span data-i18n="hlLookSwitch">Highlight looked-up words (not in vocabulary)</span><button type="button" role="switch" class="switch" data-switch="hlLook" aria-checked="false" aria-label="Highlight looked-up words"><span class="switch-knob"></span></button></div>
       <div class="set-row"><span data-i18n="glossSize">Translation font size</span>
         <div class="stepper" data-stepper="glossSize" role="group" aria-label="Translation font size"><button type="button" data-step="-1" aria-label="Decrease">−</button><output class="stepper-val"></output><button type="button" data-step="1" aria-label="Increase">+</button></div></div>
       <div class="set-row"><span data-i18n="glossColor">Translation color</span><div class="colorsel" data-colorsel="glossColor"></div></div>
@@ -363,6 +370,21 @@
         <div class="set-slider"><input type="range" data-disp="bookZoom" min="0.5" max="4" step="0.01" aria-label="Book zoom"><span class="qval" data-disp-val="bookZoom">100%</span><button type="button" class="chip" data-disp-reset="bookZoom" aria-label="Reset zoom">↺</button></div></div>
       <div class="set-row"><span data-i18n="lockView">Lock view</span>
         <button type="button" role="switch" class="switch" data-disp-lock aria-checked="false" aria-pressed="false" aria-label="Lock view"><span class="switch-knob"></span></button></div>
+    </div>
+  </div>
+
+
+  <div class="card" style="margin-top:12px">
+    <div class="set-block">
+      <div class="set-label" data-i18n="sysTitle">Reading &amp; system</div>
+      <div class="set-row"><span data-i18n="keepAwake">Keep the screen awake while reading</span><button type="button" role="switch" class="switch" data-switch="keepAwake" aria-checked="false" aria-label="Keep the screen awake while reading"><span class="switch-knob"></span></button></div>
+      <div class="set-row"><span data-i18n="keepAlive">Keep the app alive in the background</span><button type="button" role="switch" class="switch" data-switch="keepAlive" aria-checked="false" aria-label="Keep the app alive in the background"><span class="switch-knob"></span></button></div>
+      <div class="hint" data-i18n="keepAliveHint">Holds a background lock while a book is open and reopens the book if the system closed the app. The OS can still end the app when memory is short; position and progress are saved continuously.</div>
+      <div class="set-row"><span data-i18n="floatApps">Open dictionary / translator apps in a floating or split-screen window</span><button type="button" role="switch" class="switch" data-switch="floatApps" aria-checked="false" aria-label="Open external apps in a floating window"><span class="switch-knob"></span></button></div>
+      <div class="hint" data-i18n="floatHint">Android only, best effort: asks for a window next to the reader. Not every phone, app or Chrome version allows it. Translator apps open from the share sheet.</div>
+      <div class="set-row"><span data-i18n="immersiveInstall">Hide the system bars when the installed app starts</span><button type="button" role="switch" class="switch" data-switch="immersiveInstall" aria-checked="false" aria-label="Hide the system bars when the installed app starts"><span class="switch-knob"></span></button></div>
+      <div class="hint" data-i18n="immersiveHint">Avoids the browser’s “viewing full screen” banner. Takes effect after the app is reinstalled / updated by the browser. In this mode the Fullscreen / Windowed switch has no effect.</div>
+      <div id="powerHint" class="hint"></div>
     </div>
   </div>
 
@@ -537,6 +559,7 @@
 <script src="db.js"></script>
 <script src="backup.js"></script>
 <script src="display.js"></script>
+<script src="power.js"></script>
 <script src="bookmarks.js"></script>
 <script src="reader.js"></script>
 <script src="app.js"></script>

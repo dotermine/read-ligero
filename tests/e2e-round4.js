@@ -170,7 +170,7 @@ const long = Array.from({ length: 40 }, (_, i) => 'Paragraph ' + i + ' the dog s
   await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
   await page.waitForTimeout(300);
   const st = await page.evaluate(async () => ({ mode: Display.get().screenMode, saved: (await db.settings.get('screenMode')).value, zoom: Display.get().bookZoom, cssZoom: document.documentElement.style.getPropertyValue('--book-zoom'), savedZoom: (await db.settings.get('bookZoom')).value, orient: Display.get().orientation, locks: window.__locks.slice() }));
-  t('system fullscreen exit while in the background does not overwrite the saved choice', st.saved === 'fullscreen' && st.mode === 'windowed', st);
+  t('system fullscreen exit while in the background keeps the saved choice (and the UI still shows it as active)', st.saved === 'fullscreen' && st.mode === 'fullscreen', st);
   t('zoom is unchanged after returning (state + CSS + saved)', st.zoom === 1.7 && Number(st.cssZoom) === 1.7 && st.savedZoom === 1.7, st);
   t('orientation lock is re-applied after returning', st.orient === 90 && st.locks.includes('landscape-primary'), st);
   await page.evaluate(() => { Display.set({ screenMode: 'windowed', orientation: 'auto', bookZoom: 1 }, { persist: true }); });
