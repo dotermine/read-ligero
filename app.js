@@ -142,7 +142,7 @@
     var KEYS = [
       ['theme', 'light'], ['accent', '#1a73e8'], ['fontSize', 18], ['align', 'left'], ['lineHeight', 1.6],
       ['readingMode', 'scroll'], ['lang', 'en'], ['viewMode', 'large'], ['sortKey', 'addedAt'], ['sortDir', -1],
-      ['longPressMs', 500], ['menuTapMode', 'center'], ['cardFront', DEFAULT_FRONT], ['cardBack', DEFAULT_BACK],
+      ['longPressMs', 500], ['cardFront', DEFAULT_FRONT], ['cardBack', DEFAULT_BACK],
       ['wordSortKey', 'createdAt'], ['wordSortDir', -1],
       ['glossOn', true], ['glossSize', 55], ['glossColor', 'amber'], ['lookColor', 'blue'], ['vocabColor', 'amber'],
       ['newPerSession', 10], ['studyLang', ''], ['nativeLang', ''],
@@ -161,8 +161,6 @@
       state.settings.readingMode = s.readingMode;
       state.settings.lang = s.lang || 'en';
       state.settings.longPressMs = Number(s.longPressMs) || 500;
-      state.settings.menuTapMode = s.menuTapMode === 'edges' ? 'edges' : 'center';
-      var menuTapControl = $('menuTapMode'); if (menuTapControl) menuTapControl.value = state.settings.menuTapMode;
       state.settings.glossOn = s.glossOn !== false;
       state.settings.glossSize = clampNum(s.glossSize, 30, 100, 55);
       state.settings.glossColor = paletteHas(GLOSS_COLORS, s.glossColor) ? s.glossColor : 'amber';
@@ -287,7 +285,6 @@
   function updateThemeColor() {
     var bg = (getComputedStyle(document.documentElement).getPropertyValue('--bg') || '').trim() || '#ffffff';
     document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) { m.setAttribute('content', bg); });
-    document.documentElement.style.colorScheme = isDarkTheme() ? 'dark' : 'light';
   }
 
   /** Wake lock, background lock, floating external windows, launch mode of the installed app. */
@@ -314,8 +311,6 @@
     var lhVal = document.getElementById('lhVal');
     if (lhVal) lhVal.textContent = Number(state.settings.lineHeight).toFixed(1);
     var lp = document.getElementById('setLongPress');
-    var menuTap = document.getElementById('menuTapMode');
-    if (menuTap) { menuTap.value = state.settings.menuTapMode || 'center'; menuTap.addEventListener('change', function () { state.settings.menuTapMode = this.value === 'edges' ? 'edges' : 'center'; setSetting('menuTapMode', state.settings.menuTapMode); }); }
     if (lp) lp.value = state.settings.longPressMs;
     var lpVal = document.getElementById('lpVal');
     if (lpVal) lpVal.textContent = state.settings.longPressMs;
@@ -519,12 +514,9 @@
   function bindReader() {
     var back = $('backBtn'), pop = $('selPopup');
 
-    if (back) back.addEventListener('click', function () { closeReader(); showTab('library'); });
-    window.addEventListener('popstate', function (e) {
-      if (state.openBookId) { closeReader(); showTab('library'); }
-    });
+    if (back) back.addEventListener('click', closeReader);
     var qb = $('qbarBtn'); if (qb) qb.addEventListener('click', function () { setQbar($('qbarPanel').hidden); });
-    if ($('errBackBtn')) $('errBackBtn').addEventListener('click', function () { closeReader(); showTab('library'); });
+    if ($('errBackBtn')) $('errBackBtn').addEventListener('click', closeReader);
     if ($('retryBtn')) $('retryBtn').addEventListener('click', function () { if (state.openBookId) openReader(state.openBookId); });
     Bookmarks.init({ bookId: function () { return state.openBookId; }, pending: function () { return state.pendingProgress; } });
 
@@ -548,11 +540,8 @@
     Reader.onBlankTap(function (pt) {
       if (!$('qbarPanel').hidden) { setQbar(false); return; }   // first tap just collapses the display bar
       var zone = Reader.EDGE;
-      var edgeMode = state.settings.menuTapMode === 'edges';
-      var inEdge = pt && (pt.y <= zone || pt.y >= window.innerHeight - zone);
-      var inCenter = pt && pt.y > window.innerHeight * 0.30 && pt.y < window.innerHeight * 0.70;
-      if ((edgeMode && inEdge) || (!edgeMode && inCenter)) setChrome(!state.chrome);
-
+      if (pt && (pt.y <= zone || pt.y >= window.innerHeight - zone)) setChrome(true);
+      else if (state.chrome) setChrome(false);
     });
 
     if (pop) {
@@ -747,7 +736,6 @@
 
   function openReader(bookId) {
     var id = Number(bookId);
-    if (!state.openBookId) { try { history.pushState({ readligeroReader: true }, ''); } catch (e) {} }
     state.openBookId = id;
     state.lastBookId = id; state.lastOpenBookId = id; setSetting('lastOpenBookId', id);
     state.pendingProgress = null;
@@ -951,8 +939,6 @@
     var lh = document.getElementById('setLineHeight');
     var langSel = document.getElementById('setLang');
     var lp = document.getElementById('setLongPress');
-    var menuTap = document.getElementById('menuTapMode');
-    if (menuTap) { menuTap.value = state.settings.menuTapMode || 'center'; menuTap.addEventListener('change', function () { state.settings.menuTapMode = this.value === 'edges' ? 'edges' : 'center'; setSetting('menuTapMode', state.settings.menuTapMode); }); }
 
     if (fsMinus) fsMinus.addEventListener('click', function () {
       state.settings.fontSize = Math.max(12, state.settings.fontSize - 1);

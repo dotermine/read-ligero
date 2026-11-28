@@ -19,16 +19,6 @@
 
   /** Android: hand the word to an installed app through the system share sheet (see the note above). */
   var SHARE = 'webshare:{text}';
-  var ANDROID_TARGETS = {
-    'yandex-app': 'ru.yandex.translate',
-    'google-app': 'com.google.android.apps.translate',
-    'deepl-app': 'com.deepl.mobiletranslator',
-    'reverso-app': 'com.softissimo.reverso.context',
-    'microsoft-app': 'com.microsoft.translator'
-  };
-  function androidSendIntent(pkg) {
-    return 'intent:#Intent;action=android.intent.action.SEND;type=text/plain;S.android.intent.extra.TEXT={text};package=' + pkg + ';end';
-  }
 
   // The /m (mobile web) page reads ?q= reliably and is not claimed by the Android app, so the word is always pre-filled.
   var G = 'https://translate.google.com/m?sl={from}&tl={to}&hl={to}&q={text}';
@@ -101,7 +91,6 @@
       if (!p) return { error: 'notConfigured' };
       var pf = ctx.platform || platform();
       tpl = p.urls[pf] || p.urls.web;
-      if (pf === 'android' && ANDROID_TARGETS[cfg.preset]) tpl = androidSendIntent(ANDROID_TARGETS[cfg.preset]);
       if (!tpl) return { error: 'unsupported' };
       fb = p.web || p.urls.web || '';
     }
