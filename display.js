@@ -26,7 +26,7 @@ var Display = (function () {
   var S = Object.assign({}, DEFAULTS);
   var subs = [];
   var active = false;            // true while the reader tab is showing (the orientation lock only applies then)
-  var lastVisChange = 0;         // when the page last became hidden / visible (system fullscreen exits happen around it)
+  var lastVisChange = 0;         // when the page last became hidden / visible\n  var lastConfigChange = 0; (system fullscreen exits happen around it)
   var root = document.documentElement;
 
   var clamp = function (v, lo, hi) { return Math.min(hi, Math.max(lo, v)); };
@@ -108,7 +108,7 @@ var Display = (function () {
     if (fsElement() || S.screenMode !== 'fullscreen' || root.classList.contains('pseudo-fs')) return;
     // Fullscreen ended. Around a visibility change (external dictionary / translator, app switcher) that is the system's doing:
     // keep the saved choice and restore it on return. Otherwise the user left fullscreen on purpose (system gesture / Back).
-    var system = document.visibilityState === 'hidden' || Date.now() - lastVisChange < 2500;
+    var system = document.visibilityState === 'hidden' || Date.now() - lastVisChange < 2500 || Date.now() - lastConfigChange < 2500;
     if (system) { armGesture(); return; }
     set({ screenMode: 'windowed' });
   }
@@ -272,6 +272,9 @@ var Display = (function () {
     document.addEventListener('visibilitychange', function () { lastVisChange = Date.now(); if (document.visibilityState === 'visible') resume(); });
     window.addEventListener('pageshow', resume);
     window.addEventListener('focus', function () { resume(); });
+    window.addEventListener('orientationchange', function () { lastConfigChange = Date.now(); setTimeout(function () { resume(); }, 180); });
+    window.addEventListener('resize', function () { lastConfigChange = Date.now(); });
+    if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', function () { lastConfigChange = Date.now(); setTimeout(function () { if (active && S.orientation !== 'auto') applyOrientation(true); }, 180); });
     document.addEventListener('fullscreenchange', onFsChange);
     document.addEventListener('webkitfullscreenchange', onFsChange);
     render();

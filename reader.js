@@ -73,7 +73,10 @@ const Reader = (() => {
   // Words of languages written without spaces (Chinese, Japanese, Thai, Khmer, Lao, Myanmar) come from Intl.Segmenter, which
   // is locale-aware: the book language is passed in (setLanguage). Space-delimited languages use the same segmenter for taps
   // and a plain letter-run scan for the vocabulary marks.
-  const mkSeg = lang => { try { return typeof Intl !== 'undefined' && Intl.Segmenter ? new Intl.Segmenter(lang || undefined, { granularity: 'word' }) : null; } catch (e) { return new Intl.Segmenter(undefined, { granularity: 'word' }); } };
+  const mkSeg = lang => {
+    try { return typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(lang || undefined, { granularity: 'word' }) : null; }
+    catch (e) { try { return typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'word' }) : null; } catch (_) { return null; } }
+  };
   let SEG = mkSeg();
   const SPACELESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
   /** Language of the open book (ISO code) → better word boundaries for zh / ja / th … */
@@ -575,7 +578,6 @@ const Reader = (() => {
     };
     c.goTo = pos => { if (!pos || !pos.location) return; c.page = pos.location; c.frac = pos.frac || 0; if (pos.hx != null) c.hx = pos.hx; restoreScroll(); sync(); };
     attach(wrap, { signal: c.ac.signal, scroller: () => wrap });
-    attachPinch(wrap, c.ac.signal);
     return N;
   }
 
@@ -583,7 +585,7 @@ const Reader = (() => {
   /** CSS injected into every EPUB iframe: selection highlight + vocabulary marks. */
   const frameCss = () => {
     const v = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
-    return `html{-webkit-touch-callout:none}body{-webkit-tap-highlight-color:transparent}@media (pointer:coarse){html,body{-webkit-user-select:none;user-select:none}}html:not(.native-sel) ::selection{background:transparent}` +
+    return `html{-webkit-touch-callout:none;overflow-wrap:anywhere}body{-webkit-tap-highlight-color:transparent;overflow-wrap:anywhere}h1,h2,h3,h4{max-width:100%;overflow-wrap:anywhere;box-sizing:border-box}.rt-vocab[data-tr]{display:inline-block;vertical-align:baseline}@media (pointer:coarse){html,body{-webkit-user-select:none;user-select:none}}html:not(.native-sel) ::selection{background:transparent}` +
       `::highlight(reader-sel){background-color:${v('--sel') || 'rgba(26,115,232,.35)'}}` +
       `.rt-mark{border-radius:3px;position:relative}.rt-vocab{background:${v('--mk-vocab')}}.rt-look{background:${v('--mk-look')}}` +
       `.rt-vocab[data-tr]::before{content:attr(data-tr);position:absolute;left:50%;bottom:100%;transform:translateX(-50%);font-size:${v('--gloss-size') || '.55em'};line-height:1;white-space:nowrap;color:${v('--mk-rt')};font-weight:600;pointer-events:none;max-width:12em;overflow:hidden;text-overflow:ellipsis}` +
@@ -679,7 +681,6 @@ const Reader = (() => {
       d.documentElement.style.touchAction = paged ? 'pan-y' : 'pan-x pan-y';
       applyMarks(d.body);
       attach(d.body, { signal: c.ac.signal, onSwipe: paged ? s => (s > 0 ? rend.next() : rend.prev()) : null, scroller: () => (paged ? null : rend.manager.container) });
-      attachPinch(d.body, c.ac.signal);
       if (paged) d.addEventListener('keydown', key);
       d.addEventListener('scroll', clearSel, { passive: true });
     });
@@ -749,7 +750,6 @@ const Reader = (() => {
     };
     wrap.addEventListener('scroll', () => { clearSel(); sync(); }, { passive: true, signal: c.ac.signal });
     attach(wrap, { signal: c.ac.signal, scroller: () => wrap });
-    attachPinch(wrap, c.ac.signal);
     // zoom re-flows the text through a CSS variable (real time); the anchor keeps the same words under the top edge
     c.preview = () => { if (!zA) zA = last || calc(); anchorSet(zA); };
     c.commit = () => { anchorSet(zA || last); zA = null; sync(); };     // `last` = position before the re-flow, also for non-gesture zoom changes
